@@ -1,0 +1,55 @@
+name: Deploy to ECR
+
+# Merge (or push) to main → build linux/amd64 image → push to ECR.
+# Then force a new ECS Express Mode / Fargate deployment if ECS_SERVICE is set.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "339713020499"
+  ECR_REPOSITORY: my-ecr-repo
+  ECS_CLUSTER: default
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SHA: ${{ github.sha }}
+        run: |
+          IMAGE="${REGISTRY}/${ECR_REPOSITORY}"
+          docker build --platform linux/amd64 -t "${IMAGE}:${SHA}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${SHA}"
+          docker push "${IMAGE}:latest"
+
+      # Express Mode does not always roll on a new :latest by itself.
+      - name: Force ECS redeploy
+        if: ${{ vars.ECS_SERVICE != '' }}
+        env:
+          SERVICE: ${{ vars.ECS_SERVICE }}
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$SERVICE" \
+            --force-new-deployment \
+            --region "$AWS_REGION"
