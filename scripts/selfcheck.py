@@ -15,6 +15,7 @@ from groundskeeper.pipeline import (
     count_files_in_diff,
     format_review_markdown,
     pick_review_model,
+    prompt_diff,
     review_event,
     sort_findings,
 )
@@ -128,6 +129,16 @@ this only
 
     diff = "diff --git a/x.ts b/x.ts\n+++ b/x.ts\ndiff --git a/y.ts b/y.ts\n"
     assert count_files_in_diff(diff) == 2
+    noisy = (
+        "diff --git a/package-lock.json b/package-lock.json\n"
+        + ("+lock\n" * 50)
+        + "diff --git a/src/helpers/verificationHelper.ts b/src/helpers/verificationHelper.ts\n"
+        "+throw new AuditError('x')\n"
+    )
+    shown = prompt_diff(noisy, 100_000)
+    assert "verificationHelper.ts" in shown
+    assert "+lock" not in shown
+    assert "omitted 1 lockfile" in shown
 
     clean = PipelineOut(
         triage=TriageResult(files_changed=1, reason="tiny"),

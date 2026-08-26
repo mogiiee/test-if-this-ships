@@ -58,6 +58,24 @@ def count_files_in_diff(diff: str) -> int:
     return n if n else (1 if diff.strip() else 0)
 
 
+def prompt_diff(diff: str, limit: int) -> str:
+    """Lockfiles blow the prompt budget; review the source, mention the lockfile only."""
+    chunks = re.split(r"(?m)(?=^diff --git )", diff)
+    kept, skipped = [], 0
+    for chunk in chunks:
+        first = chunk.split("\n", 1)[0]
+        if any(name in first for name in ("package-lock.json", "yarn.lock", "pnpm-lock.yaml")):
+            skipped += 1
+            continue
+        kept.append(chunk)
+    text = "".join(kept)
+    if skipped:
+        text = f"(omitted {skipped} lockfile diff(s) from this prompt)\n\n" + text
+    if len(text) > limit:
+        return text[:limit] + "\n\n[diff truncated]\n"
+    return text
+
+
 def pick_review_model(triage: TriageResult, settings) -> tuple[str, str]:
     """
     Always triage first (caller). Never jump straight to Sonnet.
@@ -111,7 +129,7 @@ Title: {pr.title}
 Files changed (from diff): {file_count}
 
 Diff (may be truncated):
-{pr.diff[:60_000]}
+{prompt_diff(pr.diff, 60_000)}
 
 You are TRIAGE only. You do not skip. Return JSON only:
 {{
@@ -167,7 +185,7 @@ Triage: {triage.model_dump_json()}
 Review tier: {review_tier}
 
 ## Diff
-{pr.diff[:100_000]}
+{prompt_diff(pr.diff, 100_000)}
 
 ## Output rules
 - Return JSON only matching:
