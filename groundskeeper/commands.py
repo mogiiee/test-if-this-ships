@@ -57,8 +57,8 @@ def parse_scope(body: str, bot_login: str = "", *, trailing: bool = False) -> Sc
 
 
 def strip_scope(lesson: str) -> str:
-    text = re.sub(_ALL.pattern + r"\s*[.!]?\s*$", "", lesson, flags=re.I)
-    text = re.sub(_THIS.pattern + r"\s*[.!]?\s*$", "", text, flags=re.I)
+    text = _ALL.sub(" ", lesson)
+    text = _THIS.sub(" ", text)
     return re.sub(r"\s+", " ", text).strip(" .,-")
 
 

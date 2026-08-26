@@ -6,6 +6,7 @@ from groundskeeper.env import get_settings
 from groundskeeper.github_client import (
     core_token,
     get_review_comment,
+    learned_access_token,
     list_issue_comments,
     load_pr_bundle,
     post_pr_comment,
@@ -16,8 +17,8 @@ from groundskeeper.github_client import (
 from groundskeeper.learned import (
     LEARNED_MARK,
     LEARNING_MARK,
+    append_learned,
     learned_comment,
-    learning_comment,
     quoted_lesson,
 )
 from groundskeeper.pipeline import (
@@ -156,12 +157,39 @@ async def _save_lesson(
     scope: str,
     about: str = "",
     comment_id: int | None = None,
+    announce_scope: bool = True,
 ) -> None:
     install_token = await resolve_token(installation_id)
     source = f"{owner}/{repo}#{number}"
-    # ponytail: App contents is read-only. Marker on the comment → learn.yml commits learned.md.
+    write_token = await learned_access_token(install_token)
+    try:
+        await append_learned(
+            write_token,
+            lesson,
+            scope=scope,
+            bridge=f"{owner}/{repo}",
+            about=about,
+            source=source,
+        )
+    except Exception:
+        log.exception("could not persist lesson to learned.md")
+        fail = (
+            "## if this ships\n\n"
+            "I heard you but could not save the note. Try teaching again."
+        )
+        if comment_id:
+            await update_pr_comment(install_token, owner, repo, comment_id, fail)
+        else:
+            await post_pr_comment(install_token, owner, repo, number, fail)
+        return
     body = learned_comment(
-        lesson, scope, owner, repo, source=source, about=about
+        lesson,
+        scope,
+        owner,
+        repo,
+        source=source,
+        about=about,
+        announce_scope=announce_scope,
     )
     if comment_id:
         await update_pr_comment(install_token, owner, repo, comment_id, body)
@@ -179,7 +207,8 @@ async def teach_from_comment(
     in_reply_to: int | None = None,
 ) -> None:
     settings = get_settings()
-    scope = parse_scope(lesson, settings.bot_login, trailing=True)
+    explicit = parse_scope(lesson, settings.bot_login)
+    scope = explicit or "all"
     lesson = strip_scope(lesson).strip()
     if not lesson:
         token = await resolve_token(installation_id)
@@ -199,13 +228,15 @@ async def teach_from_comment(
             about = (parent.get("body") or about)[:500]
         except Exception:
             log.exception("could not load parent review comment %s", in_reply_to)
-    if scope:
-        await _save_lesson(
-            installation_id, owner, repo, number, lesson, scope, about=about
-        )
-        return
-    await post_pr_comment(
-        install_token, owner, repo, number, learning_comment(lesson, owner, repo)
+    await _save_lesson(
+        installation_id,
+        owner,
+        repo,
+        number,
+        lesson,
+        scope,
+        about=about,
+        announce_scope=explicit is not None,
     )
 
 

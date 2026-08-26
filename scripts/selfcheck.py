@@ -57,7 +57,16 @@ def main() -> None:
     assert parse_scope("@if-this-ships all bridges", "if-this-ships") == "all"
     assert parse_scope("never fake REQUESTED for all bridges", trailing=True) == "all"
     assert parse_scope("this helper should use AuditError", trailing=True) is None
+    assert parse_scope(
+        "for all bridges, it is okay if the package has the token"
+    ) == "all"
+    assert parse_scope("it is okay if the package has the token") is None
     assert strip_scope("never fake REQUESTED for all bridges") == "never fake REQUESTED"
+    stripped = strip_scope(
+        "for all bridges, it is okay if the package has the token"
+    )
+    assert "package" in stripped
+    assert "all bridges" not in stripped.lower()
     assert quoted_lesson("Learning this now.\n\n> never fake REQUESTED\n\nIs this") == (
         "never fake REQUESTED"
     )

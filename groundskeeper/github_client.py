@@ -37,6 +37,19 @@ async def installation_token(installation_id: int) -> str:
         return r.json()["token"]
 
 
+async def installation_token_for_repo(owner: str, repo: str) -> str:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/installation",
+            headers={
+                **_headers(app_jwt()),
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        r.raise_for_status()
+        return await installation_token(int(r.json()["id"]))
+
+
 async def resolve_token(installation_id: int | None = None) -> str:
     settings = get_settings()
     if installation_id and settings.has_github_app():
@@ -49,6 +62,21 @@ async def resolve_token(installation_id: int | None = None) -> str:
 def core_token(fallback: str) -> str:
     settings = get_settings()
     return settings.github_token or fallback
+
+
+async def learned_access_token(fallback: str) -> str:
+    """Token that can read/write LEARNED_REPO, not the webhook repo's installation."""
+    settings = get_settings()
+    raw = (settings.learned_repo or "").strip()
+    if "/" in raw and settings.has_github_app():
+        owner, repo = raw.split("/", 1)
+        try:
+            return await installation_token_for_repo(owner, repo)
+        except Exception:
+            pass
+    if settings.github_token:
+        return settings.github_token
+    return fallback
 
 
 async def load_pr_bundle(token: str, owner: str, repo: str, number: int) -> PrBundle:

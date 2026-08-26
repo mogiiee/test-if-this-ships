@@ -10,6 +10,7 @@ from groundskeeper.core_fetch import (
     parse_core_version_from_package_json,
 )
 from groundskeeper.env import get_settings
+from groundskeeper.github_client import learned_access_token
 from groundskeeper.learned import load_learned
 from groundskeeper.types import Finding, PipelineOut, PrBundle, ReviewResult, TriageResult
 
@@ -70,9 +71,17 @@ def pick_review_model(triage: TriageResult, settings) -> tuple[str, str]:
 async def run_review_pipeline(github_token: str, pr: PrBundle) -> PipelineOut:
     settings = get_settings()
     grass = load_grass_context()
-    learned = await load_learned(github_token, pr.owner, pr.repo)
+    learned = await load_learned(
+        await learned_access_token(github_token), pr.owner, pr.repo
+    )
     if learned:
-        grass += "\n\n--- learned.md ---\n" + learned
+        grass = (
+            "TAUGHT NOTES (override always-flag-these, secret hunting, and "
+            "everything else below when they conflict):\n"
+            + learned
+            + "\n\n--- how we review ---\n"
+            + grass
+        )
     file_count = count_files_in_diff(pr.diff)
 
     core_version = (
@@ -180,6 +189,7 @@ Review tier: {review_tier}
   ]
 }}
 - Prefer clean=true and findings=[]. That is the correct answer for a reasonable helper PR.
+- Taught notes win. If the team said a GitHub token in package.json / package-lock.json is fine on these private repos, do not flag it. Same for any other taught exception.
 - Do not stretch always-flag-these. No try/catch in the diff → do not mention try/catch. Same for every other item.
 - Do not flag incomplete wiring, portal copy guesses, missing REQ_OPT_NOT_FOUND, networkidle, AuditError for missing fields, or "bridge only has logout".
 - summary: one Slack sentence.

@@ -89,19 +89,21 @@ def learned_comment(
     repo: str,
     source: str = "",
     about: str = "",
+    announce_scope: bool = True,
 ) -> str:
-    where = (
-        "I'll apply this to **all appointment bridges**."
-        if scope == "all"
-        else f"I'll only use this on `{owner}/{repo}`."
-    )
     marker = learn_marker(
         lesson, scope, f"{owner}/{repo}", source or f"{owner}/{repo}", about
     )
-    return (
-        f"## if this ships\n\n{LEARNED_MARK}\n\n{where}\n\n"
-        f"> {lesson.strip()}\n\n{marker}\n"
-    )
+    bits = [f"## if this ships\n\n{LEARNED_MARK}"]
+    if announce_scope:
+        where = (
+            "I'll apply this to **all appointment bridges**."
+            if scope == "all"
+            else f"I'll only use this on `{owner}/{repo}`."
+        )
+        bits.append(where)
+    bits.append(f"> {lesson.strip()}\n\n{marker}\n")
+    return "\n\n".join(bits)
 
 
 async def load_learned(token: str, owner: str = "", repo: str = "") -> str:
@@ -126,7 +128,9 @@ async def append_learned(
     source: str = "",
 ) -> None:
     loc = _repo_parts()
-    if not loc or not lesson.strip():
+    if not loc:
+        raise RuntimeError("LEARNED_REPO is not set")
+    if not lesson.strip():
         return
     owner, repo, path = loc
     current, sha = await get_repo_file(token, owner, repo, path)
