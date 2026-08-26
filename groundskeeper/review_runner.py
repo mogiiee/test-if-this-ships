@@ -16,7 +16,6 @@ from groundskeeper.github_client import (
 from groundskeeper.learned import (
     LEARNED_MARK,
     LEARNING_MARK,
-    append_learned,
     learned_comment,
     learning_comment,
     quoted_lesson,
@@ -125,12 +124,6 @@ async def override_pr(
     )
 
 
-async def _write_token(installation_id: int | None) -> tuple[str, str]:
-    settings = get_settings()
-    install_token = await resolve_token(installation_id)
-    return settings.github_token or install_token, install_token
-
-
 def _is_our_comment(user: dict | None) -> bool:
     login = ((user or {}).get("login") or "").lower()
     return get_settings().bot_login.lower() in login
@@ -164,31 +157,9 @@ async def _save_lesson(
     about: str = "",
     comment_id: int | None = None,
 ) -> None:
-    write_token, install_token = await _write_token(installation_id)
+    install_token = await resolve_token(installation_id)
     source = f"{owner}/{repo}#{number}"
-    bridge = f"{owner}/{repo}"
-    try:
-        await append_learned(
-            write_token,
-            lesson,
-            scope=scope,
-            bridge=bridge,
-            about=about,
-            source=source,
-        )
-    except Exception:
-        log.exception("direct contents write failed; Actions will commit from the comment marker")
-        try:
-            await append_learned(
-                install_token,
-                lesson,
-                scope=scope,
-                bridge=bridge,
-                about=about,
-                source=source,
-            )
-        except Exception:
-            log.exception("installation write also failed; relying on learn.yml")
+    # ponytail: App contents is read-only. Marker on the comment → learn.yml commits learned.md.
     body = learned_comment(
         lesson, scope, owner, repo, source=source, about=about
     )
