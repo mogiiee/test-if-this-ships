@@ -79,6 +79,31 @@ async def learned_access_token(fallback: str) -> str:
     return fallback
 
 
+LOCK_FILENAMES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml"}
+
+
+def diff_from_pr_files(files: list[dict]) -> str:
+    chunks, skipped = [], 0
+    for item in files:
+        name = item.get("filename") or ""
+        base = name.rsplit("/", 1)[-1]
+        if base in LOCK_FILENAMES:
+            skipped += 1
+            continue
+        patch = item.get("patch") or ""
+        header = f"diff --git a/{name} b/{name}\n"
+        if patch:
+            chunks.append(header + patch + "\n")
+        else:
+            status = item.get("status") or "modified"
+            changes = item.get("changes")
+            chunks.append(f"{header}(no patch; {status}, {changes} changes)\n")
+    text = "".join(chunks)
+    if skipped:
+        text = f"(omitted {skipped} lockfile diff(s) from this prompt)\n\n" + text
+    return text
+
+
 async def load_pr_bundle(token: str, owner: str, repo: str, number: int) -> PrBundle:
     async with httpx.AsyncClient(timeout=120) as client:
         pr_r = await client.get(
@@ -88,11 +113,20 @@ async def load_pr_bundle(token: str, owner: str, repo: str, number: int) -> PrBu
         pr_r.raise_for_status()
         pr = pr_r.json()
 
-        diff_r = await client.get(
-            f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}",
-            headers={**_headers(token), "Accept": "application/vnd.github.diff"},
-        )
-        diff_r.raise_for_status()
+        files: list[dict] = []
+        page = 1
+        while True:
+            files_r = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}/files",
+                headers=_headers(token),
+                params={"per_page": 100, "page": page},
+            )
+            files_r.raise_for_status()
+            batch = files_r.json()
+            files.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
 
         package_json = None
         pkg_r = await client.get(
@@ -112,7 +146,7 @@ async def load_pr_bundle(token: str, owner: str, repo: str, number: int) -> PrBu
         title=pr.get("title") or "",
         body=pr.get("body") or "",
         head_sha=pr["head"]["sha"],
-        diff=diff_r.text,
+        diff=diff_from_pr_files(files),
         package_json=package_json,
     )
 

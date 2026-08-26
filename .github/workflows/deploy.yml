@@ -40,7 +40,8 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           IMAGE="${REGISTRY}/${ECR_REPOSITORY}"
-          docker build --platform linux/amd64 -t "${IMAGE}:${SHA}" -t "${IMAGE}:latest" .
+          docker build --platform linux/amd64 --build-arg GIT_SHA="${SHA}" \
+            -t "${IMAGE}:${SHA}" -t "${IMAGE}:latest" .
           docker push "${IMAGE}:${SHA}"
           docker push "${IMAGE}:latest"
 
@@ -50,4 +51,8 @@ jobs:
             --cluster "$ECS_CLUSTER" \
             --service "$ECS_SERVICE" \
             --force-new-deployment \
+            --region "$AWS_REGION"
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
             --region "$AWS_REGION"

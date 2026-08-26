@@ -139,6 +139,17 @@ this only
     assert "verificationHelper.ts" in shown
     assert "+lock" not in shown
     assert "omitted 1 lockfile" in shown
+    from groundskeeper.github_client import diff_from_pr_files
+
+    assembled = diff_from_pr_files(
+        [
+            {"filename": "package-lock.json", "patch": "+lock"},
+            {"filename": "src/helpers/verificationHelper.ts", "patch": "@@ -1 +1 @@\n+ok"},
+        ]
+    )
+    assert "verificationHelper.ts" in assembled
+    assert "+lock" not in assembled
+    assert "omitted 1 lockfile" in assembled
 
     clean = PipelineOut(
         triage=TriageResult(files_changed=1, reason="tiny"),

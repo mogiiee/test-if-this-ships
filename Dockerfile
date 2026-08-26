@@ -6,6 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8787
 
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 COPY pyproject.toml ./
 COPY groundskeeper ./groundskeeper
 COPY context ./context

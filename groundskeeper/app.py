@@ -50,6 +50,7 @@ async def health():
     return {
         "ok": True,
         "name": "if-this-ships",
+        "sha": (s.git_sha or "unknown")[:12],
         "githubApp": s.has_github_app(),
         "hasPat": bool(s.github_token),
     }
