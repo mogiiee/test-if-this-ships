@@ -9,6 +9,7 @@ from groundskeeper.github_client import (
     learned_access_token,
     list_issue_comments,
     load_pr_bundle,
+    delete_pr_comment,
     post_pr_comment,
     resolve_token,
     submit_pr_review,
@@ -92,10 +93,13 @@ async def review_pr(
         ]
         finished.set()
         await ticker
-        await update_pr_comment(token, owner, repo, comment_id, body)
         await submit_pr_review(
             token, owner, repo, number, bundle.head_sha, event, body, inline
         )
+        try:
+            await delete_pr_comment(token, owner, repo, comment_id)
+        except Exception:
+            log.exception("could not remove progress comment")
     except Exception:
         finished.set()
         ticker.cancel()

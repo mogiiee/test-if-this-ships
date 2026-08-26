@@ -140,6 +140,15 @@ async def update_pr_comment(
         r.raise_for_status()
 
 
+async def delete_pr_comment(token: str, owner: str, repo: str, comment_id: int) -> None:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.delete(
+            f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}",
+            headers=_headers(token),
+        )
+        r.raise_for_status()
+
+
 async def get_review_comment(token: str, owner: str, repo: str, comment_id: int) -> dict:
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(
