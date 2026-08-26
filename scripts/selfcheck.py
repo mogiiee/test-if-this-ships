@@ -7,11 +7,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from groundskeeper.commands import parse_mention, progress_body
 from groundskeeper.context_load import load_grass_context
 from groundskeeper.core_fetch import parse_core_version_from_package_json
 from groundskeeper.env import Settings
-from groundskeeper.pipeline import count_files_in_diff, format_review_markdown, pick_review_model
-from groundskeeper.types import PipelineOut, ReviewResult, TriageResult
+from groundskeeper.pipeline import (
+    count_files_in_diff,
+    format_review_markdown,
+    pick_review_model,
+    review_event,
+    sort_findings,
+)
+from groundskeeper.types import Finding, PipelineOut, ReviewResult, TriageResult
 
 
 def main() -> None:
@@ -28,6 +35,22 @@ def main() -> None:
     assert "coding-rules.md" in grass
     assert "try/catch" in grass
     assert "originalRequest" in grass
+    assert "already-logged-in" in grass or "already logged in" in grass
+    assert "if this ships" in grass.lower()
+
+    assert parse_mention("@if-this-ships review", "if-this-ships") == ("review", "")
+    assert parse_mention("if-this-ships review", "if-this-ships") == ("review", "")
+    assert parse_mention("@if this ships review", "if-this-ships") == ("review", "")
+    assert parse_mention("@if-this-ships", "if-this-ships") == ("review", "")
+    assert parse_mention("@if-this-ships override", "if-this-ships") == ("override", "")
+    assert parse_mention("@if-this-ships /teach don't warn about sessions", "if-this-ships") == (
+        "teach",
+        "don't warn about sessions",
+    )
+    assert parse_mention("looks fine", "if-this-ships") == (None, "")
+    assert "Review under process." in progress_body(0)
+    assert "15 seconds" in progress_body(15)
+    assert "30 seconds" in progress_body(30)
 
     # routing: multi-file → deep
     settings = Settings()
@@ -68,8 +91,9 @@ def main() -> None:
         review_tier="triage",
     )
     md = format_review_markdown(clean)
-    assert "No material findings" in md
-    assert "review_tier: `triage`" in md
+    assert "if this ships" in md
+    assert "Groundskeeper" not in md
+    assert "Approved" in md
 
     parsed = ReviewResult.model_validate(
         {
@@ -94,6 +118,26 @@ def main() -> None:
         }
     )
     assert parsed.findings[0].always_flag == "no try/catch in helpers"
+    low = Finding(
+        type="info",
+        severity="low",
+        path="a.ts",
+        line=1,
+        intent="n",
+        if_ships="n",
+        why="n",
+        fix_direction="n",
+    )
+    high = parsed.findings[0]
+    assert [f.severity for f in sort_findings([low, high])] == ["blocker", "low"]
+    dirty = ReviewResult(
+        summary="bad",
+        change_class="bugfix",
+        clean=False,
+        findings=[high],
+    )
+    assert review_event(dirty) == "REQUEST_CHANGES"
+    assert review_event(clean.review) == "APPROVE"
     print("selfcheck ok")
 
 

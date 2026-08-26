@@ -10,7 +10,42 @@ from groundskeeper.core_fetch import (
     parse_core_version_from_package_json,
 )
 from groundskeeper.env import get_settings
-from groundskeeper.types import PipelineOut, PrBundle, ReviewResult, TriageResult
+from groundskeeper.learned import load_learned
+from groundskeeper.types import Finding, PipelineOut, PrBundle, ReviewResult, TriageResult
+
+SEVERITY_RANK = {"blocker": 0, "high": 1, "medium": 2, "low": 3}
+SEVERITY_HEADING = {
+    "blocker": "Blockers",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+}
+
+
+def sort_findings(findings: list[Finding]) -> list[Finding]:
+    return sorted(findings, key=lambda f: (SEVERITY_RANK.get(f.severity, 9), f.path or ""))
+
+
+def review_event(review: ReviewResult) -> str:
+    if review.clean or not review.findings:
+        return "APPROVE"
+    if any(f.severity in {"blocker", "high"} for f in review.findings):
+        return "REQUEST_CHANGES"
+    return "APPROVE"
+
+
+def format_finding_line(f: Finding) -> str:
+    loc = f"`{f.path}:{f.line}`" if f.path and f.line else (f"`{f.path}`" if f.path else "")
+    title = f"{f.always_flag or f.type}"
+    where = f" in {loc}" if loc else ""
+    bits = [f"**{title}**{where}", f.why]
+    if f.fix_direction:
+        bits.append(f"Fix: {f.fix_direction}")
+    return "\n\n".join(bits)
+
+
+def format_inline_body(f: Finding) -> str:
+    return format_finding_line(f)
 
 
 def count_files_in_diff(diff: str) -> int:
@@ -35,6 +70,9 @@ def pick_review_model(triage: TriageResult, settings) -> tuple[str, str]:
 async def run_review_pipeline(github_token: str, pr: PrBundle) -> PipelineOut:
     settings = get_settings()
     grass = load_grass_context()
+    learned = await load_learned(github_token)
+    if learned:
+        grass += "\n\n--- learned.md ---\n" + learned
     file_count = count_files_in_diff(pr.diff)
 
     core_version = (
@@ -49,7 +87,7 @@ async def run_review_pipeline(github_token: str, pr: PrBundle) -> PipelineOut:
                 "Authorization": f"Bearer {github_token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "groundskeeper",
+                "User-Agent": "if-this-ships",
             },
         ) as client:
             snap = await fetch_core_snapshot(client, core_version)
@@ -81,7 +119,7 @@ Rules for your flags:
 
     triage_text, triage_model = complete_json(
         model=settings.model_triage,
-        system="Groundskeeper triage. JSON only. Never assume Sonnet runs by default.",
+        system="if this ships triage. JSON only. Never assume Sonnet runs by default.",
         user=triage_user,
         max_tokens=1024,
     )
@@ -94,7 +132,11 @@ Rules for your flags:
 
     review_model, review_tier = pick_review_model(triage, settings)
 
-    review_user = f"""You are Groundskeeper reviewing an internal appointment-bridge PR.
+    review_user = f"""You are if this ships, an internal teammate reviewing an appointment-bridge PR.
+
+Default is approve and shut up. Only speak when the diff *literally* breaks a hard rule.
+
+Hyperbrowser is a brand-new isolated browser every job. Never warn about leftover login sessions.
 
 ## Rules (from context/)
 {grass}
@@ -137,21 +179,26 @@ Review tier: {review_tier}
     }}
   ]
 }}
-- If nothing material: clean=true and findings=[].
-- Anything in always-flag-these.md → finding with always_flag set.
-- Flow changes without a bug → type flow_impact is OK.
-- Do not invent nits. Point; don't rewrite the PR.
-- suggestion only for small concrete patches."""
+- Prefer clean=true and findings=[]. That is the correct answer for a reasonable helper PR.
+- Do not stretch always-flag-these. No try/catch in the diff → do not mention try/catch. Same for every other item.
+- Do not flag incomplete wiring, portal copy guesses, missing REQ_OPT_NOT_FOUND, networkidle, AuditError for missing fields, or "bridge only has logout".
+- summary: one Slack sentence.
+- why / if_ships / fix_direction: one sentence each. No paragraphs.
+- At most 3 findings. Drop the rest.
+- suggestion only for a tiny patch.
+- Worst first: blocker, high, medium, low."""
 
     review_text, review_model_used = complete_json(
         model=review_model,
-        system="Groundskeeper: sparse, consequence-first bridge reviewer. JSON only. Silence when clean.",
+        system="if this ships: sparse. Approve when nothing is blatantly broken. JSON only. Two sentences max per finding. Do not invent work.",
         user=review_user,
-        max_tokens=8192,
+        max_tokens=4096,
     )
     review = ReviewResult.model_validate(extract_json(review_text))
     if review.clean:
         review.findings = []
+    else:
+        review.findings = sort_findings(review.findings)
 
     return PipelineOut(
         triage=triage,
@@ -163,46 +210,24 @@ Review tier: {review_tier}
 
 
 def format_review_markdown(out: PipelineOut) -> str:
-    settings = get_settings()
-    review, triage = out.review, out.triage
+    review = out.review
     lines = [
-        "## Groundskeeper",
+        "## if this ships",
         "",
-        review.summary,
-        "",
-        "<details><summary>meta</summary>",
-        "",
-        f"- change_class: `{review.change_class}`",
-        f"- flows: {', '.join(f'`{f}`' for f in review.flows_touched) or '—'}",
-        f"- files_changed: `{triage.files_changed}`",
-        f"- review_tier: `{out.review_tier}` (triage → deep|sonnet|triage)",
-        f"- core: `{out.core_version or 'not found'}` (`{settings.core_repo}`)",
-        f"- models: triage `{out.models['triage']}`, review `{out.models['review']}`",
-        f"- why this tier: {triage.reason or 'n/a'}",
-        "",
-        "</details>",
+        review.summary.strip(),
     ]
     if review.clean or not review.findings:
-        lines += ["", "_No material findings. Looks grounded._"]
+        lines += ["", "Nothing here that would break a job. Approved."]
         return "\n".join(lines)
 
-    lines.append("")
-    for i, f in enumerate(review.findings, start=1):
-        loc = (
-            f"`{f.path}:{f.line}`"
-            if f.path and f.line
-            else (f"`{f.path}`" if f.path else "general")
-        )
-        lines.append(f"### {i}. [{f.severity}] {f.type} — {loc}")
-        if f.always_flag:
-            lines.append(f"**Always flag:** {f.always_flag}")
-        if f.flows:
-            lines.append(f"**Flows:** {', '.join(f.flows)}")
-        lines.append(f"**Intent:** {f.intent}")
-        lines.append(f"**If this ships:** {f.if_ships}")
-        lines.append(f"**Why:** {f.why}")
-        lines.append(f"**Fix direction:** {f.fix_direction}")
+    current = None
+    for f in sort_findings(review.findings):
+        heading = SEVERITY_HEADING.get(f.severity, f.severity)
+        if heading != current:
+            current = heading
+            lines += ["", f"### {heading}", ""]
+        lines.append(format_finding_line(f))
         if f.suggestion:
-            lines += ["", "Suggestion:", "```suggestion", f.suggestion, "```"]
+            lines += ["", "```suggestion", f.suggestion, "```"]
         lines.append("")
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip() + "\n"

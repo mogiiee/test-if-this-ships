@@ -1,6 +1,6 @@
 # Always flag these
 
-If the PR introduces or leaves any of these, always post a finding. These are not style nits.
+If the PR **literally introduces** one of these, post a finding. Do not stretch a nearby rule onto code that does not do this. Incomplete helpers are not these.
 
 1. **Stub / missing logout** — empty, TODO, or not real site UI logout. Core always calls `logout()` then `close()`.
 2. **`try/catch` in bridge helpers** — breaks `ErrorClassifier` (it matches on `error.message`). Let errors propagate unless the developer explicitly required a catch.

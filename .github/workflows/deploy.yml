@@ -1,7 +1,7 @@
-name: Deploy to ECR
+name: Deploy to ECS
 
-# Merge (or push) to main → build linux/amd64 image → push to ECR.
-# Then force a new ECS Express Mode / Fargate deployment if ECS_SERVICE is set.
+# Push to main → GitHub OIDC → ECR → force TestCluster/if-this-ships.
+# No static AWS keys.
 
 on:
   push:
@@ -10,12 +10,15 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 env:
   AWS_REGION: us-east-1
   AWS_ACCOUNT_ID: "339713020499"
-  ECR_REPOSITORY: my-ecr-repo
-  ECS_CLUSTER: default
+  AWS_ROLE_ARN: arn:aws:iam::339713020499:role/if-this-ships-github
+  ECR_REPOSITORY: if-this-ships
+  ECS_CLUSTER: TestCluster
+  ECS_SERVICE: if-this-ships
 
 jobs:
   build-and-push:
@@ -25,8 +28,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - id: login-ecr
@@ -42,14 +44,10 @@ jobs:
           docker push "${IMAGE}:${SHA}"
           docker push "${IMAGE}:latest"
 
-      # Express Mode does not always roll on a new :latest by itself.
       - name: Force ECS redeploy
-        if: ${{ vars.ECS_SERVICE != '' }}
-        env:
-          SERVICE: ${{ vars.ECS_SERVICE }}
         run: |
           aws ecs update-service \
             --cluster "$ECS_CLUSTER" \
-            --service "$SERVICE" \
+            --service "$ECS_SERVICE" \
             --force-new-deployment \
             --region "$AWS_REGION"

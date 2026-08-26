@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_token: str = ""
     core_repo: str = "QdRepo/appt_bridge_core"
-    bot_login: str = "groundskeeper"
+    bot_login: str = "if-this-ships"
+    learned_repo: str = "mogiiee/test-if-this-ships"
+    learned_path: str = "context/learned.md"
 
     def normalized_private_key(self) -> str:
         return self.github_app_private_key.replace("\\n", "\n")

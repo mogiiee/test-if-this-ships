@@ -13,7 +13,7 @@ def _headers(token: str) -> dict[str, str]:
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "groundskeeper",
+        "User-Agent": "if-this-ships",
     }
 
 
@@ -89,7 +89,7 @@ async def load_pr_bundle(token: str, owner: str, repo: str, number: int) -> PrBu
     )
 
 
-async def post_pr_comment(token: str, owner: str, repo: str, number: int, body: str) -> None:
+async def post_pr_comment(token: str, owner: str, repo: str, number: int, body: str) -> int:
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             f"https://api.github.com/repos/{owner}/{repo}/issues/{number}/comments",
@@ -97,30 +97,92 @@ async def post_pr_comment(token: str, owner: str, repo: str, number: int, body: 
             json={"body": body},
         )
         r.raise_for_status()
+        return int(r.json()["id"])
 
 
-async def post_inline_comments(
+async def update_pr_comment(
+    token: str, owner: str, repo: str, comment_id: int, body: str
+) -> None:
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.patch(
+            f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}",
+            headers=_headers(token),
+            json={"body": body},
+        )
+        r.raise_for_status()
+
+
+async def get_review_comment(token: str, owner: str, repo: str, comment_id: int) -> dict:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/pulls/comments/{comment_id}",
+            headers=_headers(token),
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+async def submit_pr_review(
     token: str,
     owner: str,
     repo: str,
     number: int,
     head_sha: str,
-    comments: list[dict],
+    event: str,
+    body: str,
+    comments: list[dict] | None = None,
 ) -> None:
-    trimmed = [c for c in comments if c.get("path") and c.get("line")][:12]
-    if not trimmed:
-        return
+    payload: dict = {"commit_id": head_sha, "event": event, "body": body}
+    trimmed = [c for c in (comments or []) if c.get("path") and c.get("line")][:12]
+    if trimmed:
+        payload["comments"] = [
+            {"path": c["path"], "line": c["line"], "body": c["body"]} for c in trimmed
+        ]
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}/reviews",
             headers=_headers(token),
-            json={
-                "commit_id": head_sha,
-                "event": "COMMENT",
-                "comments": [
-                    {"path": c["path"], "line": c["line"], "body": c["body"]}
-                    for c in trimmed
-                ],
-            },
+            json=payload,
+        )
+        r.raise_for_status()
+
+
+async def get_repo_file(
+    token: str, owner: str, repo: str, path: str
+) -> tuple[str, str | None]:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/contents/{path}",
+            headers=_headers(token),
+        )
+        if r.status_code == 404:
+            return "", None
+        r.raise_for_status()
+        data = r.json()
+        if data.get("type") != "file" or not data.get("content"):
+            return "", data.get("sha")
+        return base64.b64decode(data["content"]).decode("utf-8"), data.get("sha")
+
+
+async def put_repo_file(
+    token: str,
+    owner: str,
+    repo: str,
+    path: str,
+    content: str,
+    sha: str | None,
+    message: str,
+) -> None:
+    payload: dict = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+    }
+    if sha:
+        payload["sha"] = sha
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.put(
+            f"https://api.github.com/repos/{owner}/{repo}/contents/{path}",
+            headers=_headers(token),
+            json=payload,
         )
         r.raise_for_status()
