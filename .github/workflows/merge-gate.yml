@@ -1,0 +1,36 @@
+name: Merge gate
+
+# GitHub ignores App approvals unless the App has Contents: write.
+# This copies if-this-ships APPROVE / REQUEST_CHANGES onto a commit status
+# that branch protection can require.
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  statuses: write
+
+jobs:
+  gate:
+    if: ${{ github.event.review.user.login == 'if-this-ships[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set if-this-ships status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE: ${{ github.event.review.state }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$STATE" = "approved" ]; then
+            gh api "repos/${REPO}/statuses/${SHA}" \
+              -f state=success \
+              -f context=if-this-ships \
+              -f description="if this ships approved"
+          else
+            gh api "repos/${REPO}/statuses/${SHA}" \
+              -f state=failure \
+              -f context=if-this-ships \
+              -f description="if this ships requested changes"
+          fi
