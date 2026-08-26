@@ -1,0 +1,7 @@
+{
+  "name": "appt_sys_northside",
+  "private": true,
+  "dependencies": {
+    "appt-bridge-core": "git+https://github.com/QdRepo/appt_bridge_core.git#v1.0.59"
+  }
+}
