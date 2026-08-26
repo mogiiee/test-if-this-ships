@@ -1,3 +1,7 @@
 # Learned
 
 Notes the team taught @if-this-ships. Treat these as rules on the next review.
+
+## 2026-08-26 — mogiiee/test-if-this-ships#5
+**Scope:** only `mogiiee/test-if-this-ships`
+never flag waitForTimeout before networkidle; that is the settle step
