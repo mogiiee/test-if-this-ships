@@ -1,0 +1,8 @@
+{
+  "name": "test-if-this-ships",
+  "private": true,
+  "description": "Intentional broken bridge fixture so @if-this-ships has something to review",
+  "dependencies": {
+    "appt-bridge-core": "git+https://github.com/QdRepo/appt_bridge_core.git#v1.0.59"
+  }
+}
