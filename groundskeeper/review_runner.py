@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from groundskeeper.commands import parse_mention, parse_scope, progress_body, strip_scope
+from groundskeeper.commands import help_body, parse_mention, parse_scope, progress_body, strip_scope
 from groundskeeper.env import get_settings
 from groundskeeper.github_client import (
     core_token,
@@ -36,6 +36,18 @@ def mention_triggers_review(body: str) -> bool:
     settings = get_settings()
     cmd, _ = parse_mention(body, settings.bot_login)
     return cmd == "review"
+
+
+async def help_pr(
+    installation_id: int | None,
+    owner: str,
+    repo: str,
+    number: int,
+) -> None:
+    settings = get_settings()
+    token = await resolve_token(installation_id)
+    rules_url = f"https://github.com/{settings.learned_repo}/tree/main/context"
+    await post_pr_comment(token, owner, repo, number, help_body(rules_url))
 
 
 async def review_pr(

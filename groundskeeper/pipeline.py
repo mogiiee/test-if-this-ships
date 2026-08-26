@@ -27,6 +27,10 @@ def sort_findings(findings: list[Finding]) -> list[Finding]:
     return sorted(findings, key=lambda f: (SEVERITY_RANK.get(f.severity, 9), f.path or ""))
 
 
+def only_low_findings(review: ReviewResult) -> bool:
+    return bool(review.findings) and all(f.severity == "low" for f in review.findings)
+
+
 def review_event(review: ReviewResult) -> str:
     if review.clean or not review.findings:
         return "APPROVE"
@@ -229,6 +233,11 @@ def format_review_markdown(out: PipelineOut) -> str:
     if review.clean or not review.findings:
         lines += ["", "Nothing here that would break a job. Approved."]
         return "\n".join(lines)
+
+    if only_low_findings(review):
+        lines += ["", "Approved. These are low notes and do not block merge."]
+    elif review_event(review) == "APPROVE":
+        lines += ["", "Approved. None of this blocks merge."]
 
     current = None
     for f in sort_findings(review.findings):

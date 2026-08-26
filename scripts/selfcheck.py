@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from groundskeeper.commands import parse_mention, progress_body
+from groundskeeper.commands import help_body, parse_mention, progress_body
 from groundskeeper.context_load import load_grass_context
 from groundskeeper.core_fetch import parse_core_version_from_package_json
 from groundskeeper.env import Settings
@@ -41,8 +41,10 @@ def main() -> None:
     assert parse_mention("@if-this-ships review", "if-this-ships") == ("review", "")
     assert parse_mention("if-this-ships review", "if-this-ships") == ("review", "")
     assert parse_mention("@if this ships review", "if-this-ships") == ("review", "")
-    assert parse_mention("@if-this-ships", "if-this-ships") == ("review", "")
+    assert parse_mention("@if-this-ships", "if-this-ships") == ("help", "")
+    assert parse_mention("@if-this-ships help", "if-this-ships") == ("help", "")
     assert parse_mention("@if-this-ships override", "if-this-ships") == ("override", "")
+    assert parse_mention("@if-this-ships overwrite", "if-this-ships") == ("override", "")
     assert parse_mention("@if-this-ships /teach don't warn about sessions", "if-this-ships") == (
         "teach",
         "don't warn about sessions",
@@ -187,6 +189,31 @@ this only
     )
     assert review_event(dirty) == "REQUEST_CHANGES"
     assert review_event(clean.review) == "APPROVE"
+    low_only = ReviewResult(
+        summary="Nits only.",
+        change_class="other",
+        clean=False,
+        findings=[low],
+    )
+    assert review_event(low_only) == "APPROVE"
+    low_md = format_review_markdown(
+        PipelineOut(
+            triage=TriageResult(files_changed=1, reason="tiny"),
+            review=low_only,
+            core_version="v1.0.59",
+            models={"triage": "haiku", "review": "haiku"},
+            review_tier="triage",
+        )
+    )
+    assert "Approved" in low_md
+    assert "low notes" in low_md
+    help_md = help_body("https://github.com/mogiiee/test-if-this-ships/tree/main/context")
+    assert "@if-this-ships teach" in help_md
+    assert "@if-this-ships override" in help_md
+    assert "@if-this-ships review" in help_md
+    assert "mogiiee" in help_md
+    assert "QdRepo" in help_md
+    assert "https://github.com/mogiiee/test-if-this-ships/tree/main/context" in help_md
     print("selfcheck ok")
 
 

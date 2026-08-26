@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-Command = Literal["review", "override", "teach"]
+Command = Literal["review", "override", "teach", "help"]
 Scope = Literal["all", "this"]
 
 _ALL = re.compile(
@@ -29,9 +29,11 @@ def parse_mention(body: str, bot_login: str) -> tuple[Command | None, str]:
     rest = re.sub(r"\s+", " ", rest).strip()
     rest = rest.lstrip("/").strip()
     low = rest.lower()
-    if low == "" or re.match(r"^review\b", low):
+    if low == "" or re.match(r"^(help|commands|\?)\b", low):
+        return "help", ""
+    if re.match(r"^review\b", low):
         return "review", ""
-    if re.match(r"^(override|approve)\b", low):
+    if re.match(r"^(override|overwrite|approve)\b", low):
         return "override", ""
     if re.match(r"^(teach|learn)(\s+this)?\b", low):
         lesson = re.sub(r"^(teach|learn)(\s+this)?\b[:\s-]*", "", rest, count=1, flags=re.I).strip()
@@ -60,6 +62,18 @@ def strip_scope(lesson: str) -> str:
     text = _ALL.sub(" ", lesson)
     text = _THIS.sub(" ", text)
     return re.sub(r"\s+", " ", text).strip(" .,-")
+
+
+def help_body(rules_url: str) -> str:
+    return (
+        "## if this ships\n\n"
+        "QdRepo's reviewer for appointment-bridge PRs.\n\n"
+        "- `@if-this-ships review` — review this PR\n"
+        "- `@if-this-ships teach …` — I'll remember it and use it on the next review\n"
+        "- `@if-this-ships override` — you think I'm wrong; I'll approve anyway\n\n"
+        f"Current rules: {rules_url}\n\n"
+        "To update any of these rules, contact @mogiiee."
+    )
 
 
 def progress_body(elapsed_s: int) -> str:

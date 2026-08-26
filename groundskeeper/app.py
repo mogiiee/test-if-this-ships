@@ -7,7 +7,13 @@ from pydantic import BaseModel, Field
 
 from groundskeeper.commands import parse_mention, parse_scope
 from groundskeeper.env import get_settings
-from groundskeeper.review_runner import finish_pending_teach, override_pr, review_pr, teach_from_comment
+from groundskeeper.review_runner import (
+    finish_pending_teach,
+    help_pr,
+    override_pr,
+    review_pr,
+    teach_from_comment,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("if-this-ships")
@@ -64,6 +70,9 @@ async def _queue_command(
     if not number:
         return {"ok": True, "skipped": "no pr number"}
     cmd, rest = parse_mention(body, settings.bot_login)
+    if cmd == "help":
+        await help_pr(installation_id, owner, repo, number)
+        return {"ok": True, "queued": "help"}
     if cmd == "review":
         background.add_task(review_pr, installation_id, owner, repo, number)
         return {"ok": True, "queued": "review"}
