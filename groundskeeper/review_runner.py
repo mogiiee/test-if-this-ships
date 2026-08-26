@@ -1,18 +1,26 @@
 import asyncio
 import logging
 
-from groundskeeper.commands import parse_mention, progress_body
+from groundskeeper.commands import parse_mention, parse_scope, progress_body, strip_scope
 from groundskeeper.env import get_settings
 from groundskeeper.github_client import (
     core_token,
     get_review_comment,
+    list_issue_comments,
     load_pr_bundle,
     post_pr_comment,
     resolve_token,
     submit_pr_review,
     update_pr_comment,
 )
-from groundskeeper.learned import append_learned
+from groundskeeper.learned import (
+    LEARNED_MARK,
+    LEARNING_MARK,
+    append_learned,
+    learned_comment,
+    learning_comment,
+    quoted_lesson,
+)
 from groundskeeper.pipeline import (
     format_inline_body,
     format_review_markdown,
@@ -117,6 +125,74 @@ async def override_pr(
     )
 
 
+async def _write_token(installation_id: int | None) -> tuple[str, str]:
+    settings = get_settings()
+    install_token = await resolve_token(installation_id)
+    return settings.github_token or install_token, install_token
+
+
+def _is_our_comment(user: dict | None) -> bool:
+    login = ((user or {}).get("login") or "").lower()
+    return get_settings().bot_login.lower() in login
+
+
+async def _pending_teach_comment(
+    token: str, owner: str, repo: str, number: int
+) -> tuple[int, str] | None:
+    comments = await list_issue_comments(token, owner, repo, number)
+    for comment in reversed(comments):
+        if not _is_our_comment(comment.get("user")):
+            continue
+        body = comment.get("body") or ""
+        if LEARNED_MARK in body:
+            return None
+        if LEARNING_MARK in body:
+            lesson = quoted_lesson(body)
+            if lesson:
+                return int(comment["id"]), lesson
+            return None
+    return None
+
+
+async def _save_lesson(
+    installation_id: int | None,
+    owner: str,
+    repo: str,
+    number: int,
+    lesson: str,
+    scope: str,
+    about: str = "",
+    comment_id: int | None = None,
+) -> None:
+    write_token, install_token = await _write_token(installation_id)
+    source = f"{owner}/{repo}#{number}"
+    bridge = f"{owner}/{repo}"
+    try:
+        await append_learned(
+            write_token,
+            lesson,
+            scope=scope,
+            bridge=bridge,
+            about=about,
+            source=source,
+        )
+    except Exception:
+        log.exception("teach via PAT failed; trying installation token")
+        await append_learned(
+            install_token,
+            lesson,
+            scope=scope,
+            bridge=bridge,
+            about=about,
+            source=source,
+        )
+    body = learned_comment(lesson, scope, owner, repo)
+    if comment_id:
+        await update_pr_comment(install_token, owner, repo, comment_id, body)
+    else:
+        await post_pr_comment(install_token, owner, repo, number, body)
+
+
 async def teach_from_comment(
     installation_id: int | None,
     owner: str,
@@ -126,9 +202,19 @@ async def teach_from_comment(
     about: str = "",
     in_reply_to: int | None = None,
 ) -> None:
-    if not lesson.strip():
-        return
     settings = get_settings()
+    scope = parse_scope(lesson, settings.bot_login, trailing=True)
+    lesson = strip_scope(lesson).strip()
+    if not lesson:
+        token = await resolve_token(installation_id)
+        await post_pr_comment(
+            token,
+            owner,
+            repo,
+            number,
+            "## if this ships\n\nTell me what to remember.",
+        )
+        return
     install_token = await resolve_token(installation_id)
     token = settings.github_token or install_token
     if in_reply_to:
@@ -137,16 +223,34 @@ async def teach_from_comment(
             about = (parent.get("body") or about)[:500]
         except Exception:
             log.exception("could not load parent review comment %s", in_reply_to)
-    source = f"{owner}/{repo}#{number}"
-    try:
-        await append_learned(token, lesson, about=about, source=source)
-    except Exception:
-        log.exception("teach via PAT failed; trying installation token")
-        await append_learned(install_token, lesson, about=about, source=source)
+    if scope:
+        await _save_lesson(
+            installation_id, owner, repo, number, lesson, scope, about=about
+        )
+        return
     await post_pr_comment(
-        install_token,
+        install_token, owner, repo, number, learning_comment(lesson, owner, repo)
+    )
+
+
+async def finish_pending_teach(
+    installation_id: int | None,
+    owner: str,
+    repo: str,
+    number: int,
+    scope: str,
+) -> None:
+    token = await resolve_token(installation_id)
+    pending = await _pending_teach_comment(token, owner, repo, number)
+    if not pending:
+        return
+    comment_id, lesson = pending
+    await _save_lesson(
+        installation_id,
         owner,
         repo,
         number,
-        "Got it — saved. I'll use that on the next review.",
+        lesson,
+        scope,
+        comment_id=comment_id,
     )

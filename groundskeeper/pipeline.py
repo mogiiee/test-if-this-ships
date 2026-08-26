@@ -70,7 +70,7 @@ def pick_review_model(triage: TriageResult, settings) -> tuple[str, str]:
 async def run_review_pipeline(github_token: str, pr: PrBundle) -> PipelineOut:
     settings = get_settings()
     grass = load_grass_context()
-    learned = await load_learned(github_token)
+    learned = await load_learned(github_token, pr.owner, pr.repo)
     if learned:
         grass += "\n\n--- learned.md ---\n" + learned
     file_count = count_files_in_diff(pr.diff)

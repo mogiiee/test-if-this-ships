@@ -48,6 +48,37 @@ def main() -> None:
         "don't warn about sessions",
     )
     assert parse_mention("looks fine", "if-this-ships") == (None, "")
+    from groundskeeper.commands import parse_scope, strip_scope
+    from groundskeeper.learned import filter_learned, quoted_lesson
+
+    assert parse_scope("all bridges") == "all"
+    assert parse_scope("this bridge") == "this"
+    assert parse_scope("only this") == "this"
+    assert parse_scope("@if-this-ships all bridges", "if-this-ships") == "all"
+    assert parse_scope("never fake REQUESTED for all bridges", trailing=True) == "all"
+    assert parse_scope("this helper should use AuditError", trailing=True) is None
+    assert strip_scope("never fake REQUESTED for all bridges") == "never fake REQUESTED"
+    assert quoted_lesson("Learning this now.\n\n> never fake REQUESTED\n\nIs this") == (
+        "never fake REQUESTED"
+    )
+    learned_doc = """# Learned
+
+## 2026-08-26 — a/b#1
+**Scope:** all bridges
+global rule
+
+## 2026-08-26 — a/other#2
+**Scope:** only `a/other`
+other only
+
+## 2026-08-26 — a/b#3
+**Scope:** only `a/b`
+this only
+"""
+    filtered = filter_learned(learned_doc, "a", "b")
+    assert "global rule" in filtered
+    assert "this only" in filtered
+    assert "other only" not in filtered
     assert "Review under process." in progress_body(0)
     assert "15 seconds" in progress_body(15)
     assert "30 seconds" in progress_body(30)

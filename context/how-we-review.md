@@ -10,3 +10,4 @@
 - Flow names go in the summary only. Do not add a finding just to say a flow changed.
 - Cap: 3 findings. If you have more, you are overthinking — keep the worst and drop the rest.
 - **Hyperbrowser is a new browser every job.** Do not flag leftover login sessions.
+- Taught notes in `learned.md` are rules. Honor **Scope:** all bridges vs only `owner/repo`.

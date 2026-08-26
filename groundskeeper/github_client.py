@@ -147,13 +147,27 @@ async def submit_pr_review(
         r.raise_for_status()
 
 
+async def list_issue_comments(
+    token: str, owner: str, repo: str, number: int
+) -> list[dict]:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/issues/{number}/comments",
+            headers=_headers(token),
+            params={"per_page": 100},
+        )
+        r.raise_for_status()
+        return list(r.json())
+
+
 async def get_repo_file(
-    token: str, owner: str, repo: str, path: str
+    token: str, owner: str, repo: str, path: str, ref: str = "main"
 ) -> tuple[str, str | None]:
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(
             f"https://api.github.com/repos/{owner}/{repo}/contents/{path}",
             headers=_headers(token),
+            params={"ref": ref},
         )
         if r.status_code == 404:
             return "", None
@@ -176,6 +190,7 @@ async def put_repo_file(
     payload: dict = {
         "message": message,
         "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": "main",
     }
     if sha:
         payload["sha"] = sha

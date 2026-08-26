@@ -2,6 +2,16 @@ import re
 from typing import Literal
 
 Command = Literal["review", "override", "teach"]
+Scope = Literal["all", "this"]
+
+_ALL = re.compile(
+    r"\b(?:for\s+)?(?:all(?:\s+appointment)?\s+bridges|every\s+bridge|all of them)\b",
+    re.I,
+)
+_THIS = re.compile(
+    r"\b(?:for\s+)?(?:this(?:\s+particular)?(?:\s+one)?\s+bridge|only this(?:\s+one|\s+bridge)?|this repo)\b",
+    re.I,
+)
 
 
 def _mention_pattern(bot_login: str) -> str:
@@ -27,6 +37,29 @@ def parse_mention(body: str, bot_login: str) -> tuple[Command | None, str]:
         lesson = re.sub(r"^(teach|learn)(\s+this)?\b[:\s-]*", "", rest, count=1, flags=re.I).strip()
         return "teach", lesson
     return None, rest
+
+
+def parse_scope(body: str, bot_login: str = "", *, trailing: bool = False) -> Scope | None:
+    text = body
+    if bot_login:
+        text = re.sub(_mention_pattern(bot_login), " ", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip()
+    low = text.lower()
+    this_pat = _THIS.pattern + r"\s*[.!]?\s*$" if trailing else _THIS.pattern
+    all_pat = _ALL.pattern + r"\s*[.!]?\s*$" if trailing else _ALL.pattern
+    has_this = bool(re.search(this_pat, low, flags=re.I) or (not trailing and re.fullmatch(r"this", low)))
+    has_all = bool(re.search(all_pat, low, flags=re.I) or (not trailing and re.fullmatch(r"all", low)))
+    if has_this:
+        return "this"
+    if has_all:
+        return "all"
+    return None
+
+
+def strip_scope(lesson: str) -> str:
+    text = re.sub(_ALL.pattern + r"\s*[.!]?\s*$", "", lesson, flags=re.I)
+    text = re.sub(_THIS.pattern + r"\s*[.!]?\s*$", "", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip(" .,-")
 
 
 def progress_body(elapsed_s: int) -> str:

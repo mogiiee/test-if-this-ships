@@ -5,9 +5,9 @@ import logging
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from groundskeeper.commands import parse_mention
+from groundskeeper.commands import parse_mention, parse_scope
 from groundskeeper.env import get_settings
-from groundskeeper.review_runner import override_pr, review_pr, teach_from_comment
+from groundskeeper.review_runner import finish_pending_teach, override_pr, review_pr, teach_from_comment
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("if-this-ships")
@@ -71,8 +71,6 @@ def _queue_command(
         background.add_task(override_pr, installation_id, owner, repo, number, who)
         return {"ok": True, "queued": "override"}
     if cmd == "teach":
-        if not rest:
-            return {"ok": True, "skipped": "empty teach"}
         background.add_task(
             teach_from_comment,
             installation_id,
@@ -84,6 +82,12 @@ def _queue_command(
             in_reply_to,
         )
         return {"ok": True, "queued": "teach"}
+    scope = parse_scope(body, settings.bot_login)
+    if scope:
+        background.add_task(
+            finish_pending_teach, installation_id, owner, repo, number, scope
+        )
+        return {"ok": True, "queued": "teach-scope"}
     return {"ok": True, "skipped": "no command"}
 
 
