@@ -1,7 +1,7 @@
 name: Save learned note
 
-# Bot cannot write the repo (GitHub App contents=read). This job can.
-# Push to main then also triggers Deploy to ECS.
+# App contents is read-only. User-repo branch protection blocks GITHUB_TOKEN
+# from pushing main, so this opens a PR and admin-merges.
 
 on:
   issue_comment:
@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   save:
@@ -25,7 +26,9 @@ jobs:
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: python scripts/apply_learn.py
-      - name: Commit to main
+      - name: Commit, PR, merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "if-this-ships[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -34,5 +37,9 @@ jobs:
             echo "no change"
             exit 0
           fi
+          BRANCH="learn/${GITHUB_RUN_ID}"
+          git checkout -B "$BRANCH"
           git commit -m "teach: save learned note"
-          git push origin HEAD:main
+          git push origin "$BRANCH"
+          url=$(gh pr create --base main --head "$BRANCH" --title "teach: save learned note" --body "Taught note from a review comment.")
+          gh pr merge "$url" --merge --admin --delete-branch
