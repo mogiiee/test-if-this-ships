@@ -49,7 +49,7 @@ async def health():
     }
 
 
-def _queue_command(
+async def _queue_command(
     background: BackgroundTasks,
     installation_id: int | None,
     owner: str,
@@ -68,11 +68,10 @@ def _queue_command(
         background.add_task(review_pr, installation_id, owner, repo, number)
         return {"ok": True, "queued": "review"}
     if cmd == "override":
-        background.add_task(override_pr, installation_id, owner, repo, number, who)
+        await override_pr(installation_id, owner, repo, number, who)
         return {"ok": True, "queued": "override"}
     if cmd == "teach":
-        background.add_task(
-            teach_from_comment,
+        await teach_from_comment(
             installation_id,
             owner,
             repo,
@@ -84,9 +83,7 @@ def _queue_command(
         return {"ok": True, "queued": "teach"}
     scope = parse_scope(body, settings.bot_login)
     if scope:
-        background.add_task(
-            finish_pending_teach, installation_id, owner, repo, number, scope
-        )
+        await finish_pending_teach(installation_id, owner, repo, number, scope)
         return {"ok": True, "queued": "teach-scope"}
     return {"ok": True, "skipped": "no command"}
 
@@ -114,7 +111,7 @@ async def github_webhook(
             return {"ok": True, "skipped": "not a pr"}
         if _is_bot(comment.get("user")):
             return {"ok": True, "skipped": "bot"}
-        return _queue_command(
+        return await _queue_command(
             background,
             installation_id,
             owner,
@@ -129,7 +126,7 @@ async def github_webhook(
         if _is_bot(comment.get("user")):
             return {"ok": True, "skipped": "bot"}
         pr = payload.get("pull_request") or {}
-        return _queue_command(
+        return await _queue_command(
             background,
             installation_id,
             owner,

@@ -177,16 +177,21 @@ async def _save_lesson(
             source=source,
         )
     except Exception:
-        log.exception("teach via PAT failed; trying installation token")
-        await append_learned(
-            install_token,
-            lesson,
-            scope=scope,
-            bridge=bridge,
-            about=about,
-            source=source,
-        )
-    body = learned_comment(lesson, scope, owner, repo)
+        log.exception("direct contents write failed; Actions will commit from the comment marker")
+        try:
+            await append_learned(
+                install_token,
+                lesson,
+                scope=scope,
+                bridge=bridge,
+                about=about,
+                source=source,
+            )
+        except Exception:
+            log.exception("installation write also failed; relying on learn.yml")
+    body = learned_comment(
+        lesson, scope, owner, repo, source=source, about=about
+    )
     if comment_id:
         await update_pr_comment(install_token, owner, repo, comment_id, body)
     else:

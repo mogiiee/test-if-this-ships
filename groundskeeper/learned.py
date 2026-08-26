@@ -1,3 +1,5 @@
+import base64
+import json
 import re
 from datetime import datetime, timezone
 
@@ -59,13 +61,47 @@ def learning_comment(lesson: str, owner: str, repo: str) -> str:
     )
 
 
-def learned_comment(lesson: str, scope: str, owner: str, repo: str) -> str:
+def learn_marker(
+    lesson: str,
+    scope: str,
+    bridge: str,
+    source: str,
+    about: str = "",
+) -> str:
+    payload = json.dumps(
+        {
+            "lesson": lesson.strip(),
+            "scope": scope,
+            "bridge": bridge,
+            "source": source,
+            "about": about,
+        },
+        separators=(",", ":"),
+    )
+    b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    return f"<!-- if-this-ships-learn {b64} -->"
+
+
+def learned_comment(
+    lesson: str,
+    scope: str,
+    owner: str,
+    repo: str,
+    source: str = "",
+    about: str = "",
+) -> str:
     where = (
         "I'll apply this to **all appointment bridges**."
         if scope == "all"
         else f"I'll only use this on `{owner}/{repo}`."
     )
-    return f"## if this ships\n\n{LEARNED_MARK}\n\n{where}\n\n> {lesson.strip()}\n"
+    marker = learn_marker(
+        lesson, scope, f"{owner}/{repo}", source or f"{owner}/{repo}", about
+    )
+    return (
+        f"## if this ships\n\n{LEARNED_MARK}\n\n{where}\n\n"
+        f"> {lesson.strip()}\n\n{marker}\n"
+    )
 
 
 async def load_learned(token: str, owner: str = "", repo: str = "") -> str:

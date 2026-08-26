@@ -79,6 +79,15 @@ this only
     assert "global rule" in filtered
     assert "this only" in filtered
     assert "other only" not in filtered
+    from groundskeeper.learned import learn_marker
+    import base64
+    import json
+
+    marker = learn_marker("never fake REQUESTED", "this", "a/b", "a/b#3")
+    assert marker.startswith("<!-- if-this-ships-learn ")
+    payload = json.loads(base64.b64decode(marker.split()[2].encode()).decode())
+    assert payload["lesson"] == "never fake REQUESTED"
+    assert payload["scope"] == "this"
     assert "Review under process." in progress_body(0)
     assert "15 seconds" in progress_body(15)
     assert "30 seconds" in progress_body(30)
