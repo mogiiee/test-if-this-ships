@@ -7,7 +7,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from groundskeeper.commands import help_body, parse_mention, progress_body
+from groundskeeper.commands import (
+    estimate_review_seconds,
+    file_names_from_diff,
+    help_body,
+    parse_mention,
+    progress_body,
+)
 from groundskeeper.context_load import load_grass_context
 from groundskeeper.core_fetch import parse_core_version_from_package_json
 from groundskeeper.env import Settings
@@ -42,6 +48,9 @@ def main() -> None:
     assert parse_mention("@if-this-ships review", "if-this-ships") == ("review", "")
     assert parse_mention("if-this-ships review", "if-this-ships") == ("review", "")
     assert parse_mention("@if this ships review", "if-this-ships") == ("review", "")
+    assert parse_mention("@if-this-ships deep review", "if-this-ships") == ("deep", "")
+    assert parse_mention("@if-this-ships deep", "if-this-ships") == ("deep", "")
+    assert parse_mention("@if-this-ships review deep", "if-this-ships") == ("deep", "")
     assert parse_mention("@if-this-ships", "if-this-ships") == ("help", "")
     assert parse_mention("@if-this-ships help", "if-this-ships") == ("help", "")
     assert parse_mention("@if-this-ships override", "if-this-ships") == ("override", "")
@@ -103,6 +112,13 @@ this only
     assert "Review under process." in progress_body(0)
     assert "15 seconds" in progress_body(15)
     assert "30 seconds" in progress_body(30)
+    assert "Deep review" in progress_body(0, deep=True, eta_s=120, files=["a.ts"])
+    assert "`a.ts`" in progress_body(0, deep=True, eta_s=120, files=["a.ts"])
+    assert "About" in progress_body(0, eta_s=90)
+    assert file_names_from_diff(
+        "diff --git a/x.ts b/x.ts\n+++ b/x.ts\ndiff --git a/y.ts b/y.ts\n"
+    ) == ["x.ts", "y.ts"]
+    assert estimate_review_seconds(1, deep=False) < estimate_review_seconds(8, deep=True)
 
     # routing: multi-file → deep
     settings = Settings()
@@ -233,6 +249,7 @@ this only
     assert "@if-this-ships teach" in help_md
     assert "@if-this-ships override" in help_md
     assert "@if-this-ships review" in help_md
+    assert "deep review" in help_md
     assert "mogiiee" in help_md
     assert "QdRepo" in help_md
     assert "https://github.com/mogiiee/test-if-this-ships/tree/main/context" in help_md

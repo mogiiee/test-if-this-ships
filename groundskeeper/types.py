@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class Finding(BaseModel):
-    type: Literal["blatant", "flow_impact", "hyperbrowser_risk", "contract", "info"]
+    type: Literal["blatant", "flow_impact", "hyperbrowser_risk", "contract", "security", "info"]
     severity: Literal["blocker", "high", "medium", "low"]
     path: str | None = None
     line: int | None = None

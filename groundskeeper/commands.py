@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-Command = Literal["review", "override", "teach", "help"]
+Command = Literal["review", "deep", "override", "teach", "help"]
 Scope = Literal["all", "this"]
 
 _ALL = re.compile(
@@ -31,6 +31,8 @@ def parse_mention(body: str, bot_login: str) -> tuple[Command | None, str]:
     low = rest.lower()
     if low == "" or re.match(r"^(help|commands|\?)\b", low):
         return "help", ""
+    if re.match(r"^(deep(\s+review)?|review\s+deep)\b", low):
+        return "deep", ""
     if re.match(r"^review\b", low):
         return "review", ""
     if re.match(r"^(override|overwrite|approve)\b", low):
@@ -69,6 +71,7 @@ def help_body(rules_url: str) -> str:
         "## if this ships\n\n"
         "QdRepo's reviewer for appointment-bridge PRs.\n\n"
         "- `@if-this-ships review` — review this PR\n"
+        "- `@if-this-ships deep review` — full pass on the strongest model (security, core/node contract, unused code, what ships)\n"
         "- `@if-this-ships teach …` — I'll remember it and use it on the next review\n"
         "- `@if-this-ships override` — you think I'm wrong; I'll approve anyway\n\n"
         f"Current rules: {rules_url}\n\n"
@@ -76,7 +79,39 @@ def help_body(rules_url: str) -> str:
     )
 
 
-def progress_body(elapsed_s: int) -> str:
+def file_names_from_diff(diff: str) -> list[str]:
+    return re.findall(r"^diff --git a/.+ b/(.+)$", diff, flags=re.M)
+
+
+def estimate_review_seconds(file_count: int, *, deep: bool) -> int:
+    # ponytail: comment ETA only; Opus wall time varies. Bump constants if comments undershoot.
+    n = max(file_count, 1)
+    if deep:
+        return min(240, 75 + 25 * n)
+    return min(120, 30 + 12 * n)
+
+
+def format_eta(seconds: int) -> str:
+    if seconds < 45:
+        return f"about {seconds} seconds"
+    minutes = max(1, round(seconds / 60))
+    return "about 1 min" if minutes == 1 else f"about {minutes} minutes"
+
+
+def progress_body(
+    elapsed_s: int,
+    *,
+    files: list[str] | None = None,
+    eta_s: int | None = None,
+    deep: bool = False,
+) -> str:
+    kind = "Deep review" if deep else "Review"
+    eta = f" {format_eta(eta_s).capitalize()}." if eta_s else ""
+    looking = ""
+    if files:
+        shown = files[:15]
+        extra = f" (+{len(files) - 15} more)" if len(files) > 15 else ""
+        looking = "\n\nFiles: " + ", ".join(f"`{f}`" for f in shown) + extra
     if elapsed_s <= 0:
-        return "## if this ships\n\nReview under process."
-    return f"## if this ships\n\nStill reviewing after {elapsed_s} seconds."
+        return f"## if this ships\n\n{kind} under process.{eta}{looking}"
+    return f"## if this ships\n\nStill reviewing after {elapsed_s} seconds.{eta}{looking}"

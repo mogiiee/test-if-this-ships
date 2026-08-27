@@ -90,7 +90,9 @@ def pick_review_model(triage: TriageResult, settings) -> tuple[str, str]:
     return settings.model_triage, "triage"
 
 
-async def run_review_pipeline(github_token: str, pr: PrBundle) -> PipelineOut:
+async def run_review_pipeline(
+    github_token: str, pr: PrBundle, *, deep: bool = False
+) -> PipelineOut:
     settings = get_settings()
     grass = load_grass_context()
     learned = await load_learned(
@@ -124,7 +126,16 @@ async def run_review_pipeline(github_token: str, pr: PrBundle) -> PipelineOut:
             snap = await fetch_core_snapshot(client, core_version)
             core_prompt = format_core_for_prompt(snap)
 
-    triage_user = f"""PR: {pr.owner}/{pr.repo}#{pr.number}
+    if deep:
+        triage = TriageResult(
+            files_changed=file_count,
+            complete_flow=True,
+            deep_review=True,
+            reason="requested deep review",
+        )
+        review_model, review_tier = settings.model_opus, "deep"
+    else:
+        triage_user = f"""PR: {pr.owner}/{pr.repo}#{pr.number}
 Title: {pr.title}
 Files changed (from diff): {file_count}
 
@@ -148,22 +159,92 @@ Rules for your flags:
 - use_sonnet=true ONLY when deep_review is false AND a single-file change still needs more than a cheap pass (non-trivial logic). For tiny one-file edits, use_sonnet=false so triage model does the review.
 - Prefer deep_review=false and use_sonnet=false for simple one-file changes."""
 
-    triage_text, triage_model = complete_json(
-        model=settings.model_triage,
-        system="if this ships triage. JSON only. Never assume Sonnet runs by default.",
-        user=triage_user,
-        max_tokens=1024,
-    )
-    triage = TriageResult.model_validate(extract_json(triage_text))
-    triage.files_changed = file_count  # trust the diff count
-    if file_count >= 2:
-        triage.deep_review = True
-    if triage.complete_flow:
-        triage.deep_review = True
+        triage_text, triage_model = complete_json(
+            model=settings.model_triage,
+            system="if this ships triage. JSON only. Never assume Sonnet runs by default.",
+            user=triage_user,
+            max_tokens=1024,
+        )
+        triage = TriageResult.model_validate(extract_json(triage_text))
+        triage.files_changed = file_count
+        if file_count >= 2:
+            triage.deep_review = True
+        if triage.complete_flow:
+            triage.deep_review = True
+        review_model, review_tier = pick_review_model(triage, settings)
 
-    review_model, review_tier = pick_review_model(triage, settings)
+    diff_limit = 150_000 if deep else 100_000
+    schema = """{
+  "summary": string,
+  "change_class": "flow_change"|"refactor"|"feature"|"bugfix"|"html"|"config"|"test"|"other",
+  "flows_touched": string[],
+  "clean": boolean,
+  "findings": [
+    {
+      "type": "blatant"|"flow_impact"|"hyperbrowser_risk"|"contract"|"security"|"info",
+      "severity": "blocker"|"high"|"medium"|"low",
+      "path": string optional,
+      "line": number optional,
+      "flows": string[],
+      "intent": string,
+      "if_ships": string,
+      "why": string,
+      "fix_direction": string,
+      "suggestion": string optional,
+      "always_flag": string optional
+    }
+  ]
+}"""
 
-    review_user = f"""You are if this ships, an internal teammate reviewing an appointment-bridge PR.
+    if deep:
+        review_user = f"""You are if this ships doing a DEEP review of an appointment-bridge PR.
+
+This is not the sparse pass. Walk the whole diff. Report every real issue you can defend.
+Do not rubber-stamp. Do not stop at the first finding.
+
+Cover at least:
+- Security: secrets, tokens, creds in logs, unsafe eval/URL, auth gaps
+- Core / installed packages: APIs the diff calls vs core at {core_version or "unknown"}; what breaks if node_modules / appt-bridge-core do not match package.json
+- Verify/create/change/auth/logout contracts (exists, isRequestChanged, rescheduleAllowed, fake REQUESTED/CONFIRMED)
+- Selectors, settle-then-read, unused or dead code in the diff
+- Taught notes still win when they conflict
+
+Hyperbrowser is a brand-new isolated browser every job. Do not warn about leftover login sessions.
+
+## Rules (from context/)
+{grass}
+
+## Core at {core_version or "unknown"}
+{core_prompt}
+
+## PR
+{pr.owner}/{pr.repo}#{pr.number}
+Title: {pr.title}
+Body:
+{pr.body or "(empty)"}
+
+Triage: {triage.model_dump_json()}
+Review tier: {review_tier}
+
+## Diff
+{prompt_diff(pr.diff, diff_limit)}
+
+## Output rules
+- Return JSON only matching:
+{schema}
+- List every distinct real issue. Cap 10. Worst first.
+- Taught notes win.
+- summary: one Slack sentence of what this PR actually does.
+- why / if_ships / fix_direction: one sentence each.
+- clean=true only if you truly found nothing.
+"""
+        system = (
+            "if this ships: deep review. JSON only. Strongest pass. "
+            "Do not hide issues. Two sentences max per finding."
+        )
+        max_tokens = 8192
+    else:
+        review_user = f"""You are if this ships, an internal teammate reviewing an appointment-bridge PR.
 
 Default is approve and shut up. Only speak when the diff *literally* breaks a hard rule.
 
@@ -185,31 +266,11 @@ Triage: {triage.model_dump_json()}
 Review tier: {review_tier}
 
 ## Diff
-{prompt_diff(pr.diff, 100_000)}
+{prompt_diff(pr.diff, diff_limit)}
 
 ## Output rules
 - Return JSON only matching:
-{{
-  "summary": string,
-  "change_class": "flow_change"|"refactor"|"feature"|"bugfix"|"html"|"config"|"test"|"other",
-  "flows_touched": string[],
-  "clean": boolean,
-  "findings": [
-    {{
-      "type": "blatant"|"flow_impact"|"hyperbrowser_risk"|"contract"|"info",
-      "severity": "blocker"|"high"|"medium"|"low",
-      "path": string optional,
-      "line": number optional,
-      "flows": string[],
-      "intent": string,
-      "if_ships": string,
-      "why": string,
-      "fix_direction": string,
-      "suggestion": string optional,
-      "always_flag": string optional
-    }}
-  ]
-}}
+{schema}
 - Prefer clean=true and findings=[]. That is the correct answer for a reasonable helper PR.
 - Taught notes win. If the team said a GitHub token in package.json / package-lock.json is fine on these private repos, do not flag it. Same for any other taught exception.
 - Do not stretch always-flag-these. No try/catch in the diff → do not mention try/catch. Same for every other item.
@@ -219,24 +280,33 @@ Review tier: {review_tier}
 - At most 3 findings. Drop the rest.
 - suggestion only for a tiny patch.
 - Worst first: blocker, high, medium, low."""
+        system = "if this ships: sparse. Approve when nothing is blatantly broken. JSON only. Two sentences max per finding. Do not invent work."
+        max_tokens = 4096
 
     review_text, review_model_used = complete_json(
         model=review_model,
-        system="if this ships: sparse. Approve when nothing is blatantly broken. JSON only. Two sentences max per finding. Do not invent work.",
+        system=system,
         user=review_user,
-        max_tokens=4096,
+        max_tokens=max_tokens,
     )
     review = ReviewResult.model_validate(extract_json(review_text))
     if review.clean:
         review.findings = []
     else:
         review.findings = sort_findings(review.findings)
+        if deep:
+            review.findings = review.findings[:10]
 
+    models = {"review": review_model_used}
+    if not deep:
+        models["triage"] = triage_model
+    else:
+        models["triage"] = "skipped"
     return PipelineOut(
         triage=triage,
         review=review,
         core_version=core_version,
-        models={"triage": triage_model, "review": review_model_used},
+        models=models,
         review_tier=review_tier,
     )
 

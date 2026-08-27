@@ -75,8 +75,11 @@ async def _queue_command(
         await help_pr(installation_id, owner, repo, number)
         return {"ok": True, "queued": "help"}
     if cmd == "review":
-        background.add_task(review_pr, installation_id, owner, repo, number)
+        background.add_task(review_pr, installation_id, owner, repo, number, False)
         return {"ok": True, "queued": "review"}
+    if cmd == "deep":
+        background.add_task(review_pr, installation_id, owner, repo, number, True)
+        return {"ok": True, "queued": "deep"}
     if cmd == "override":
         await override_pr(installation_id, owner, repo, number, who)
         return {"ok": True, "queued": "override"}

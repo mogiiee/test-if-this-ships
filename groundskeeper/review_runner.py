@@ -1,7 +1,15 @@
 import asyncio
 import logging
 
-from groundskeeper.commands import help_body, parse_mention, parse_scope, progress_body, strip_scope
+from groundskeeper.commands import (
+    estimate_review_seconds,
+    file_names_from_diff,
+    help_body,
+    parse_mention,
+    parse_scope,
+    progress_body,
+    strip_scope,
+)
 from groundskeeper.env import get_settings
 from groundskeeper.github_client import (
     core_token,
@@ -36,7 +44,7 @@ log = logging.getLogger("if-this-ships")
 def mention_triggers_review(body: str) -> bool:
     settings = get_settings()
     cmd, _ = parse_mention(body, settings.bot_login)
-    return cmd == "review"
+    return cmd in {"review", "deep"}
 
 
 async def help_pr(
@@ -56,10 +64,18 @@ async def review_pr(
     owner: str,
     repo: str,
     number: int,
+    deep: bool = False,
 ) -> None:
     token = await resolve_token(installation_id)
+    bundle = await load_pr_bundle(token, owner, repo, number)
+    files = file_names_from_diff(bundle.diff)
+    eta_s = estimate_review_seconds(len(files) or 1, deep=deep)
     comment_id = await post_pr_comment(
-        token, owner, repo, number, progress_body(0)
+        token,
+        owner,
+        repo,
+        number,
+        progress_body(0, files=files, eta_s=eta_s, deep=deep),
     )
     finished = asyncio.Event()
 
@@ -75,15 +91,18 @@ async def review_pr(
                 elapsed += 15
                 try:
                     await update_pr_comment(
-                        token, owner, repo, comment_id, progress_body(elapsed)
+                        token,
+                        owner,
+                        repo,
+                        comment_id,
+                        progress_body(elapsed, files=files, eta_s=eta_s, deep=deep),
                     )
                 except Exception:
                     log.exception("progress comment update failed")
 
     ticker = asyncio.create_task(heartbeat())
     try:
-        bundle = await load_pr_bundle(token, owner, repo, number)
-        out = await run_review_pipeline(core_token(token), bundle)
+        out = await run_review_pipeline(core_token(token), bundle, deep=deep)
         event = review_event(out.review)
         body = format_review_markdown(out)
         inline = [
