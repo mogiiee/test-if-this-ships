@@ -94,7 +94,9 @@ async def run_review_pipeline(
     github_token: str, pr: PrBundle, *, deep: bool = False
 ) -> PipelineOut:
     settings = get_settings()
-    grass = load_grass_context()
+    grass = load_grass_context(
+        skip={"how-we-review.md"} if deep else None
+    )
     learned = await load_learned(
         await learned_access_token(github_token), pr.owner, pr.repo
     )
@@ -199,14 +201,15 @@ Rules for your flags:
     if deep:
         review_user = f"""You are if this ships doing a DEEP review of an appointment-bridge PR.
 
-This is not the sparse pass. Walk the whole diff. Report every real issue you can defend.
-Do not rubber-stamp. Do not stop at the first finding.
+Flag everything that is wrong, fragile, inconsistent, unused, or likely to break. No finding cap. Do not drop nits.
+This is not the sparse `@if-this-ships review` pass. Walk every file in the diff. Do not stop at the first issue. Do not rubber-stamp.
 
-Cover at least:
+You MUST look for and report, when present:
 - Security: secrets, tokens, creds in logs, unsafe eval/URL, auth gaps
-- Core / installed packages: APIs the diff calls vs core at {core_version or "unknown"}; what breaks if node_modules / appt-bridge-core do not match package.json
+- Core / installed packages: APIs the diff calls vs core at {core_version or "unknown"}; package.json pin vs lockfile (e.g. v1.0.61 vs v1.0.59); what breaks if node_modules does not match
 - Verify/create/change/auth/logout contracts (exists, isRequestChanged, rescheduleAllowed, fake REQUESTED/CONFIRMED)
-- Selectors, settle-then-read, unused or dead code in the diff
+- Fragile selectors, .first() / .nth(0), timezone-naive Date parsing, settle-then-read
+- Unused or dead code in the diff
 - Taught notes still win when they conflict
 
 Hyperbrowser is a brand-new isolated browser every job. Do not warn about leftover login sessions.
@@ -232,17 +235,19 @@ Review tier: {review_tier}
 ## Output rules
 - Return JSON only matching:
 {schema}
-- List every distinct real issue. Cap 10. Worst first.
+- Report every distinct issue. No cap. Worst first. Nits stay in the list as low.
+- Do not omit selector / Date / nth(0) / lockfile-pin issues because a bigger bug exists.
 - Taught notes win.
 - summary: one Slack sentence of what this PR actually does.
 - why / if_ships / fix_direction: one sentence each.
-- clean=true only if you truly found nothing.
+- clean=true only if you truly found nothing. If findings is non-empty, clean=false.
 """
         system = (
-            "if this ships: deep review. JSON only. Strongest pass. "
-            "Do not hide issues. Two sentences max per finding."
+            "if this ships: exhaustive deep review. JSON only. "
+            "Report every issue. Never drop nits to stay under a cap. "
+            "Two sentences max per finding."
         )
-        max_tokens = 8192
+        max_tokens = 16384
     else:
         review_user = f"""You are if this ships, an internal teammate reviewing an appointment-bridge PR.
 
@@ -290,12 +295,16 @@ Review tier: {review_tier}
         max_tokens=max_tokens,
     )
     review = ReviewResult.model_validate(extract_json(review_text))
-    if review.clean:
+    if deep:
+        if review.findings:
+            review.clean = False
+            review.findings = sort_findings(review.findings)
+        else:
+            review.findings = []
+    elif review.clean:
         review.findings = []
     else:
         review.findings = sort_findings(review.findings)
-        if deep:
-            review.findings = review.findings[:10]
 
     models = {"review": review_model_used}
     if not deep:

@@ -39,6 +39,9 @@ def main() -> None:
     grass = load_grass_context()
     assert "always-flag-these.md" in grass
     assert "how-we-review.md" in grass
+    deep_grass = load_grass_context(skip={"how-we-review.md"})
+    assert "how-we-review.md" not in deep_grass
+    assert "always-flag-these.md" in deep_grass
     assert "coding-rules.md" in grass
     assert "try/catch" in grass
     assert "originalRequest" in grass
