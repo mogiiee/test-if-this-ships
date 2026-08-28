@@ -206,11 +206,12 @@ async def _save_lesson(
             about=about,
             source=source,
         )
-    except Exception:
+    except Exception as e:
         log.exception("could not persist lesson to learned.md")
         fail = (
             "## if this ships\n\n"
-            "I heard you but could not save the note. Try teaching again."
+            "I heard you but could not save the note.\n\n"
+            f"`{type(e).__name__}: {str(e)[:400]}`"
         )
         if comment_id:
             await update_pr_comment(install_token, owner, repo, comment_id, fail)
@@ -263,6 +264,13 @@ async def teach_from_comment(
             about = (parent.get("body") or about)[:500]
         except Exception:
             log.exception("could not load parent review comment %s", in_reply_to)
+    comment_id = await post_pr_comment(
+        install_token,
+        owner,
+        repo,
+        number,
+        "## if this ships\n\nSaving this note.",
+    )
     await _save_lesson(
         installation_id,
         owner,
@@ -271,6 +279,7 @@ async def teach_from_comment(
         lesson,
         scope,
         about=about,
+        comment_id=comment_id,
         announce_scope=explicit is not None,
     )
 

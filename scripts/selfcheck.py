@@ -256,6 +256,14 @@ this only
     assert "mogiiee" in help_md
     assert "QdRepo" in help_md
     assert "https://github.com/mogiiee/test-if-this-ships/tree/main/context" in help_md
+    from scripts.apply_learn import parse_learn_env
+
+    assert parse_learn_env({"LEARN_JSON": "null", "COMMENT_BODY": ""}) is None
+    parsed = parse_learn_env(
+        {"LEARN_JSON": json.dumps({"lesson": "no try/catch", "scope": "this", "source": "a/b#1"})}
+    )
+    assert parsed is not None
+    assert parsed["lesson"] == "no try/catch"
     print("selfcheck ok")
 
 

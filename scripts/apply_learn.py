@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Append a taught note from a bot comment. Stdlib only — runs in Actions."""
+"""Append a taught note from a bot comment or repository_dispatch. Stdlib only."""
 from __future__ import annotations
 
 import base64
@@ -15,12 +15,24 @@ HEADER = "# Learned\n\nNotes the team taught @if-this-ships. Treat these as rule
 MARK = re.compile(r"<!-- if-this-ships-learn ([A-Za-z0-9+/=]+) -->")
 
 
-def main() -> None:
-    body = os.environ.get("COMMENT_BODY") or ""
+def parse_learn_env(environ: dict[str, str] | None = None) -> dict | None:
+    env = environ if environ is not None else os.environ
+    raw = (env.get("LEARN_JSON") or "").strip()
+    if raw and raw not in ("null", "{}", "[]"):
+        data = json.loads(raw)
+        if (data.get("lesson") or "").strip():
+            return data
+    body = env.get("COMMENT_BODY") or ""
     m = MARK.search(body)
     if not m:
+        return None
+    return json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
+
+
+def main() -> None:
+    data = parse_learn_env()
+    if not data:
         return
-    data = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
     lesson = (data.get("lesson") or "").strip()
     if not lesson:
         return

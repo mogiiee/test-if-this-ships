@@ -84,7 +84,8 @@ async def _queue_command(
         await override_pr(installation_id, owner, repo, number, who)
         return {"ok": True, "queued": "override"}
     if cmd == "teach":
-        await teach_from_comment(
+        background.add_task(
+            teach_from_comment,
             installation_id,
             owner,
             repo,
@@ -96,7 +97,9 @@ async def _queue_command(
         return {"ok": True, "queued": "teach"}
     scope = parse_scope(body, settings.bot_login)
     if scope:
-        await finish_pending_teach(installation_id, owner, repo, number, scope)
+        background.add_task(
+            finish_pending_teach, installation_id, owner, repo, number, scope
+        )
         return {"ok": True, "queued": "teach-scope"}
     return {"ok": True, "skipped": "no command"}
 

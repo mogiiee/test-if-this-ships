@@ -257,11 +257,12 @@ async def put_repo_file(
     content: str,
     sha: str | None,
     message: str,
+    branch: str = "main",
 ) -> None:
     payload: dict = {
         "message": message,
         "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-        "branch": "main",
+        "branch": branch,
     }
     if sha:
         payload["sha"] = sha
@@ -271,4 +272,20 @@ async def put_repo_file(
             headers=_headers(token),
             json=payload,
         )
-        r.raise_for_status()
+        if r.is_error:
+            raise RuntimeError(f"GitHub {r.status_code} writing {path}: {r.text[:400]}")
+
+
+async def dispatch_repository_event(
+    token: str, owner: str, repo: str, event_type: str, payload: dict
+) -> None:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            f"https://api.github.com/repos/{owner}/{repo}/dispatches",
+            headers=_headers(token),
+            json={"event_type": event_type, "client_payload": payload},
+        )
+        if r.is_error:
+            raise RuntimeError(
+                f"GitHub {r.status_code} dispatching {event_type}: {r.text[:400]}"
+            )

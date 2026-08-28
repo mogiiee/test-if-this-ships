@@ -1,9 +1,11 @@
 name: Save learned note
 
-# App contents is read-only. User-repo branch protection blocks GITHUB_TOKEN
-# from pushing main, so this opens a PR and admin-merges.
+# main requires status if-this-ships, so Contents API cannot commit there.
+# Teach on any repo dispatches here; we commit on a branch and admin-merge.
 
 on:
+  repository_dispatch:
+    types: [if-this-ships-learn]
   issue_comment:
     types: [created, edited]
 
@@ -13,7 +15,7 @@ permissions:
 
 jobs:
   save:
-    if: ${{ github.event.comment.user.login == 'if-this-ships[bot]' && contains(github.event.comment.body, '<!-- if-this-ships-learn') }}
+    if: ${{ github.event_name == 'repository_dispatch' || (github.event.comment.user.login == 'if-this-ships[bot]' && contains(github.event.comment.body, '<!-- if-this-ships-learn')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +27,7 @@ jobs:
       - name: Append note
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
+          LEARN_JSON: ${{ toJson(github.event.client_payload) }}
         run: python scripts/apply_learn.py
       - name: Commit, PR, merge
         env:

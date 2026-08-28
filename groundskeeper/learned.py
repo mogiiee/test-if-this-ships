@@ -1,10 +1,15 @@
+import asyncio
 import base64
 import json
 import re
 from datetime import datetime, timezone
 
 from groundskeeper.env import get_settings
-from groundskeeper.github_client import get_repo_file, put_repo_file
+from groundskeeper.github_client import (
+    dispatch_repository_event,
+    get_repo_file,
+    put_repo_file,
+)
 
 HEADER = "# Learned\n\nNotes the team taught @if-this-ships. Treat these as rules on the next review.\n"
 LEARNING_MARK = "Learning this now."
@@ -158,19 +163,36 @@ async def append_learned(
             sha,
             f"teach: {source or 'review comment'}",
         )
-    except Exception:
-        # ponytail: one retry on SHA clash; two simultaneous teaches still lose one
-        current, sha = await get_repo_file(token, owner, repo, path)
-        if not (current or "").strip():
-            current = HEADER
-        if not current.endswith("\n"):
-            current += "\n"
-        await put_repo_file(
-            token,
-            owner,
-            repo,
-            path,
-            current + block,
-            sha,
-            f"teach: {source or 'review comment'}",
+        return
+    except RuntimeError as e:
+        # main requires status if-this-ships; Contents API cannot bypass it.
+        msg = str(e)
+        blocked = "required status" in msg.lower() or any(
+            f"GitHub {c}" in msg for c in ("403", "409", "422")
         )
+        if not blocked:
+            raise
+    await dispatch_repository_event(
+        token,
+        owner,
+        repo,
+        "if-this-ships-learn",
+        {
+            "lesson": lesson.strip(),
+            "scope": scope,
+            "bridge": bridge,
+            "about": about,
+            "source": source or "teach",
+        },
+    )
+    needle = lesson.strip()
+    tag = source or "teach"
+    for _ in range(36):
+        await asyncio.sleep(5)
+        text, _sha = await get_repo_file(token, owner, repo, path)
+        if needle in (text or "") and tag in (text or ""):
+            return
+    raise RuntimeError(
+        "learn workflow did not land context/learned.md in time "
+        "(main is protected; save goes through Actions admin-merge)"
+    )
