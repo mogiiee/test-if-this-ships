@@ -17,9 +17,9 @@ class Settings(BaseSettings):
     github_token: str = ""
     core_repo: str = "QdRepo/appt_bridge_core"
     bot_login: str = "if-this-ships"
-    learned_repo: str = "mogiiee/test-if-this-ships"
-    learned_path: str = "context/learned.md"
-    learned_ref: str = "learned"
+    learned_repo: str = "QdRepo/if-this-ships-notes"
+    learned_path: str = "learned.md"
+    learned_ref: str = "main"
     git_sha: str = "unknown"
 
     def normalized_private_key(self) -> str:
