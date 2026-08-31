@@ -276,16 +276,39 @@ async def put_repo_file(
             raise RuntimeError(f"GitHub {r.status_code} writing {path}: {r.text[:400]}")
 
 
-async def dispatch_repository_event(
-    token: str, owner: str, repo: str, event_type: str, payload: dict
+async def get_ref_sha(token: str, owner: str, repo: str, ref: str) -> str | None:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/git/ref/{ref}",
+            headers=_headers(token),
+        )
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()["object"]["sha"]
+
+
+async def create_branch(
+    token: str, owner: str, repo: str, branch: str, from_sha: str
 ) -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
-            f"https://api.github.com/repos/{owner}/{repo}/dispatches",
+            f"https://api.github.com/repos/{owner}/{repo}/git/refs",
             headers=_headers(token),
-            json={"event_type": event_type, "client_payload": payload},
+            json={"ref": f"refs/heads/{branch}", "sha": from_sha},
         )
+        if r.status_code == 422:
+            return
         if r.is_error:
-            raise RuntimeError(
-                f"GitHub {r.status_code} dispatching {event_type}: {r.text[:400]}"
-            )
+            raise RuntimeError(f"GitHub {r.status_code} creating {branch}: {r.text[:400]}")
+
+
+async def ensure_branch(
+    token: str, owner: str, repo: str, branch: str, from_branch: str = "main"
+) -> None:
+    if await get_ref_sha(token, owner, repo, f"heads/{branch}"):
+        return
+    base = await get_ref_sha(token, owner, repo, f"heads/{from_branch}")
+    if not base:
+        raise RuntimeError(f"no {from_branch} to create {branch} from")
+    await create_branch(token, owner, repo, branch, base)

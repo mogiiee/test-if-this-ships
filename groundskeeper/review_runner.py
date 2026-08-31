@@ -55,7 +55,10 @@ async def help_pr(
 ) -> None:
     settings = get_settings()
     token = await resolve_token(installation_id)
-    rules_url = f"https://github.com/{settings.learned_repo}/tree/main/context"
+    rules_url = (
+        f"https://github.com/{settings.learned_repo}/blob/"
+        f"{settings.learned_ref}/{settings.learned_path}"
+    )
     await post_pr_comment(token, owner, repo, number, help_body(rules_url))
 
 

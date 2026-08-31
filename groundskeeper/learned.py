@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import json
 import re
@@ -6,7 +5,7 @@ from datetime import datetime, timezone
 
 from groundskeeper.env import get_settings
 from groundskeeper.github_client import (
-    dispatch_repository_event,
+    ensure_branch,
     get_repo_file,
     put_repo_file,
 )
@@ -16,13 +15,13 @@ LEARNING_MARK = "Learning this now."
 LEARNED_MARK = "I have learned this."
 
 
-def _repo_parts() -> tuple[str, str, str] | None:
+def _repo_parts() -> tuple[str, str, str, str] | None:
     settings = get_settings()
     raw = (settings.learned_repo or "").strip()
     if "/" not in raw:
         return None
     owner, repo = raw.split("/", 1)
-    return owner, repo, settings.learned_path
+    return owner, repo, settings.learned_path, settings.learned_ref or "learned"
 
 
 def block_applies(block: str, owner: str, repo: str) -> bool:
@@ -115,8 +114,12 @@ async def load_learned(token: str, owner: str = "", repo: str = "") -> str:
     loc = _repo_parts()
     if not loc:
         return ""
-    learned_owner, learned_repo, path = loc
-    text, _sha = await get_repo_file(token, learned_owner, learned_repo, path)
+    learned_owner, learned_repo, path, ref = loc
+    text, _sha = await get_repo_file(
+        token, learned_owner, learned_repo, path, ref=ref
+    )
+    if not (text or "").strip():
+        text, _sha = await get_repo_file(token, learned_owner, learned_repo, path)
     text = (text or "").strip()
     if not text or not owner:
         return text
@@ -137,10 +140,14 @@ async def append_learned(
         raise RuntimeError("LEARNED_REPO is not set")
     if not lesson.strip():
         return
-    owner, repo, path = loc
-    current, sha = await get_repo_file(token, owner, repo, path)
+    owner, repo, path, ref = loc
+    await ensure_branch(token, owner, repo, ref)
+    current, sha = await get_repo_file(token, owner, repo, path, ref=ref)
+    if not (current or "").strip():
+        current, sha = await get_repo_file(token, owner, repo, path)
     if not (current or "").strip():
         current = HEADER
+        sha = None
     if not current.endswith("\n"):
         current += "\n"
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -162,37 +169,24 @@ async def append_learned(
             current + block,
             sha,
             f"teach: {source or 'review comment'}",
+            branch=ref,
         )
-        return
     except RuntimeError as e:
-        # main requires status if-this-ships; Contents API cannot bypass it.
-        msg = str(e)
-        blocked = "required status" in msg.lower() or any(
-            f"GitHub {c}" in msg for c in ("403", "409", "422")
-        )
-        if not blocked:
+        if "409" not in str(e):
             raise
-    await dispatch_repository_event(
-        token,
-        owner,
-        repo,
-        "if-this-ships-learn",
-        {
-            "lesson": lesson.strip(),
-            "scope": scope,
-            "bridge": bridge,
-            "about": about,
-            "source": source or "teach",
-        },
-    )
-    needle = lesson.strip()
-    tag = source or "teach"
-    for _ in range(36):
-        await asyncio.sleep(5)
-        text, _sha = await get_repo_file(token, owner, repo, path)
-        if needle in (text or "") and tag in (text or ""):
-            return
-    raise RuntimeError(
-        "learn workflow did not land context/learned.md in time "
-        "(main is protected; save goes through Actions admin-merge)"
-    )
+        current, sha = await get_repo_file(token, owner, repo, path, ref=ref)
+        if not (current or "").strip():
+            current = HEADER
+            sha = None
+        if not current.endswith("\n"):
+            current += "\n"
+        await put_repo_file(
+            token,
+            owner,
+            repo,
+            path,
+            current + block,
+            sha,
+            f"teach: {source or 'review comment'}",
+            branch=ref,
+        )

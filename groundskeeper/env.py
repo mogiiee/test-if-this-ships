@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     bot_login: str = "if-this-ships"
     learned_repo: str = "mogiiee/test-if-this-ships"
     learned_path: str = "context/learned.md"
+    learned_ref: str = "learned"
     git_sha: str = "unknown"
 
     def normalized_private_key(self) -> str:

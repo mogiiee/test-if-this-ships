@@ -248,14 +248,14 @@ this only
     )
     assert "Approved" in low_md
     assert "low notes" in low_md
-    help_md = help_body("https://github.com/mogiiee/test-if-this-ships/tree/main/context")
+    help_md = help_body("https://github.com/mogiiee/test-if-this-ships/blob/learned/context/learned.md")
     assert "@if-this-ships teach" in help_md
     assert "@if-this-ships override" in help_md
     assert "@if-this-ships review" in help_md
     assert "deep review" in help_md
     assert "mogiiee" in help_md
     assert "QdRepo" in help_md
-    assert "https://github.com/mogiiee/test-if-this-ships/tree/main/context" in help_md
+    assert "learned.md" in help_md
     from scripts.apply_learn import parse_learn_env
 
     assert parse_learn_env({"LEARN_JSON": "null", "COMMENT_BODY": ""}) is None
