@@ -11,12 +11,19 @@ def complete_json(*, model: str, system: str, user: str, max_tokens: int = 4096)
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is required")
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    res = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
+    try:
+        res = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+    except anthropic.AuthenticationError as e:
+        raise RuntimeError("Anthropic API key is invalid. Update ANTHROPIC_API_KEY on the service.") from e
+    except anthropic.APIStatusError as e:
+        raise RuntimeError(f"Anthropic {e.status_code}: {e.message}") from e
+    except anthropic.APIError as e:
+        raise RuntimeError(f"Anthropic error: {e}") from e
     text = "".join(b.text for b in res.content if getattr(b, "type", None) == "text")
     return text, model
 

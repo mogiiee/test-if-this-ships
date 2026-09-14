@@ -122,7 +122,7 @@ async def review_pr(
             await delete_pr_comment(token, owner, repo, comment_id)
         except Exception:
             log.exception("could not remove progress comment")
-    except Exception:
+    except Exception as e:
         finished.set()
         ticker.cancel()
         try:
@@ -131,7 +131,9 @@ async def review_pr(
                 owner,
                 repo,
                 comment_id,
-                "## if this ships\n\nReview failed. Check the service logs.",
+                "## if this ships\n\n"
+                "Review failed.\n\n"
+                f"`{type(e).__name__}: {str(e)[:500]}`",
             )
         except Exception:
             log.exception("could not mark progress comment as failed")

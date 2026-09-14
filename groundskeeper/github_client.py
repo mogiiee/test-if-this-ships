@@ -215,7 +215,15 @@ async def submit_pr_review(
             headers=_headers(token),
             json=payload,
         )
-        r.raise_for_status()
+        if r.status_code == 422 and payload.get("comments"):
+            payload.pop("comments", None)
+            r = await client.post(
+                f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}/reviews",
+                headers=_headers(token),
+                json=payload,
+            )
+        if r.is_error:
+            raise RuntimeError(f"GitHub {r.status_code} submitting review: {r.text[:400]}")
 
 
 async def list_issue_comments(
