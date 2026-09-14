@@ -1,7 +1,7 @@
-name: Deploy to ECS
+name: Deploy to DEV3
 
-# Push to main → GitHub OIDC → ECR → force TestCluster/if-this-ships.
-# No static AWS keys.
+# Push to main → GitHub OIDC → ECR in appointment DEV3 → App Runner.
+# No static AWS keys. Role is locked to this workflow on main.
 
 on:
   push:
@@ -14,11 +14,10 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  AWS_ACCOUNT_ID: "339713020499"
-  AWS_ROLE_ARN: arn:aws:iam::339713020499:role/if-this-ships-github
+  AWS_ACCOUNT_ID: "183631321235"
+  AWS_ROLE_ARN: arn:aws:iam::183631321235:role/if-this-ships-github
   ECR_REPOSITORY: if-this-ships
-  ECS_CLUSTER: TestCluster
-  ECS_SERVICE: if-this-ships
+  APPRUNNER_SERVICE: if-this-ships
 
 jobs:
   build-and-push:
@@ -45,14 +44,28 @@ jobs:
           docker push "${IMAGE}:${SHA}"
           docker push "${IMAGE}:latest"
 
-      - name: Force ECS redeploy
+      - name: Deploy App Runner
         run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --force-new-deployment \
-            --region "$AWS_REGION"
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --region "$AWS_REGION"
+          ARN=$(aws apprunner list-services --region "$AWS_REGION" \
+            --query "ServiceSummaryList[?ServiceName=='${APPRUNNER_SERVICE}'].ServiceArn" \
+            --output text)
+          if [ -z "$ARN" ] || [ "$ARN" = "None" ]; then
+            echo "App Runner service not created yet. Image is in ECR. Set if_this_ships_has_image=true and apply terraform."
+            exit 0
+          fi
+          aws apprunner start-deployment --service-arn "$ARN" --region "$AWS_REGION"
+          for i in $(seq 1 40); do
+            STATUS=$(aws apprunner describe-service --service-arn "$ARN" --region "$AWS_REGION" \
+              --query "Service.Status" --output text)
+            echo "status=$STATUS"
+            if [ "$STATUS" = "RUNNING" ]; then
+              exit 0
+            fi
+            if [ "$STATUS" = "CREATE_FAILED" ] || [ "$STATUS" = "DELETE_FAILED" ]; then
+              echo "App Runner failed: $STATUS"
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for App Runner"
+          exit 1

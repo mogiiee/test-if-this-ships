@@ -11,6 +11,7 @@ from groundskeeper.commands import (
     strip_scope,
 )
 from groundskeeper.env import get_settings
+from groundskeeper.fail import fail_body
 from groundskeeper.github_client import (
     core_token,
     get_review_comment,
@@ -55,11 +56,15 @@ async def help_pr(
 ) -> None:
     settings = get_settings()
     token = await resolve_token(installation_id)
-    rules_url = (
-        f"https://github.com/{settings.learned_repo}/blob/"
-        f"{settings.learned_ref}/{settings.learned_path}"
-    )
-    await post_pr_comment(token, owner, repo, number, help_body(rules_url))
+    try:
+        rules_url = (
+            f"https://github.com/{settings.learned_repo}/blob/"
+            f"{settings.learned_ref}/{settings.learned_path}"
+        )
+        await post_pr_comment(token, owner, repo, number, help_body(rules_url))
+    except Exception as e:
+        log.exception("help failed")
+        await post_pr_comment(token, owner, repo, number, fail_body("help", e))
 
 
 async def review_pr(
@@ -69,42 +74,45 @@ async def review_pr(
     number: int,
     deep: bool = False,
 ) -> None:
-    token = await resolve_token(installation_id)
-    bundle = await load_pr_bundle(token, owner, repo, number)
-    files = file_names_from_diff(bundle.diff)
-    eta_s = estimate_review_seconds(len(files) or 1, deep=deep)
-    comment_id = await post_pr_comment(
-        token,
-        owner,
-        repo,
-        number,
-        progress_body(0, files=files, eta_s=eta_s, deep=deep),
-    )
+    token = None
+    comment_id = None
+    ticker = None
     finished = asyncio.Event()
-
-    async def heartbeat() -> None:
-        elapsed = 0
-        while True:
-            try:
-                await asyncio.wait_for(finished.wait(), timeout=15)
-                return
-            except TimeoutError:
-                if finished.is_set():
-                    return
-                elapsed += 15
-                try:
-                    await update_pr_comment(
-                        token,
-                        owner,
-                        repo,
-                        comment_id,
-                        progress_body(elapsed, files=files, eta_s=eta_s, deep=deep),
-                    )
-                except Exception:
-                    log.exception("progress comment update failed")
-
-    ticker = asyncio.create_task(heartbeat())
     try:
+        token = await resolve_token(installation_id)
+        bundle = await load_pr_bundle(token, owner, repo, number)
+        files = file_names_from_diff(bundle.diff)
+        eta_s = estimate_review_seconds(len(files) or 1, deep=deep)
+        comment_id = await post_pr_comment(
+            token,
+            owner,
+            repo,
+            number,
+            progress_body(0, files=files, eta_s=eta_s, deep=deep),
+        )
+
+        async def heartbeat() -> None:
+            elapsed = 0
+            while True:
+                try:
+                    await asyncio.wait_for(finished.wait(), timeout=15)
+                    return
+                except TimeoutError:
+                    if finished.is_set():
+                        return
+                    elapsed += 15
+                    try:
+                        await update_pr_comment(
+                            token,
+                            owner,
+                            repo,
+                            comment_id,
+                            progress_body(elapsed, files=files, eta_s=eta_s, deep=deep),
+                        )
+                    except Exception:
+                        log.exception("progress comment update failed")
+
+        ticker = asyncio.create_task(heartbeat())
         out = await run_review_pipeline(core_token(token), bundle, deep=deep)
         event = review_event(out.review)
         body = format_review_markdown(out)
@@ -124,23 +132,22 @@ async def review_pr(
             log.exception("could not remove progress comment")
     except Exception as e:
         finished.set()
-        ticker.cancel()
-        try:
-            await update_pr_comment(
-                token,
-                owner,
-                repo,
-                comment_id,
-                "## if this ships\n\n"
-                "Review failed.\n\n"
-                f"`{type(e).__name__}: {str(e)[:500]}`",
-            )
-        except Exception:
-            log.exception("could not mark progress comment as failed")
+        if ticker is not None:
+            ticker.cancel()
+        log.exception("review failed")
+        if token:
+            body = fail_body("review", e)
+            try:
+                if comment_id:
+                    await update_pr_comment(token, owner, repo, comment_id, body)
+                else:
+                    await post_pr_comment(token, owner, repo, number, body)
+            except Exception:
+                log.exception("could not mark review as failed")
         raise
     finally:
         finished.set()
-        if not ticker.done():
+        if ticker is not None and not ticker.done():
             ticker.cancel()
 
 
@@ -152,17 +159,21 @@ async def override_pr(
     who: str = "developer",
 ) -> None:
     token = await resolve_token(installation_id)
-    bundle = await load_pr_bundle(token, owner, repo, number)
-    await submit_pr_review(
-        token,
-        owner,
-        repo,
-        number,
-        bundle.head_sha,
-        "APPROVE",
-        f"## if this ships\n\n{who} overrode the review. Treating this as approved.",
-        [],
-    )
+    try:
+        bundle = await load_pr_bundle(token, owner, repo, number)
+        await submit_pr_review(
+            token,
+            owner,
+            repo,
+            number,
+            bundle.head_sha,
+            "APPROVE",
+            f"## if this ships\n\n{who} overrode the review. Treating this as approved.",
+            [],
+        )
+    except Exception as e:
+        log.exception("override failed")
+        await post_pr_comment(token, owner, repo, number, fail_body("override", e))
 
 
 def _is_our_comment(user: dict | None) -> bool:
@@ -213,11 +224,7 @@ async def _save_lesson(
         )
     except Exception as e:
         log.exception("could not persist lesson to learned.md")
-        fail = (
-            "## if this ships\n\n"
-            "I heard you but could not save the note.\n\n"
-            f"`{type(e).__name__}: {str(e)[:400]}`"
-        )
+        fail = fail_body("teach", e)
         if comment_id:
             await update_pr_comment(install_token, owner, repo, comment_id, fail)
         else:
@@ -247,46 +254,55 @@ async def teach_from_comment(
     about: str = "",
     in_reply_to: int | None = None,
 ) -> None:
-    settings = get_settings()
-    explicit = parse_scope(lesson, settings.bot_login)
-    scope = explicit or "all"
-    lesson = strip_scope(lesson).strip()
-    if not lesson:
-        token = await resolve_token(installation_id)
-        await post_pr_comment(
-            token,
+    try:
+        settings = get_settings()
+        explicit = parse_scope(lesson, settings.bot_login)
+        scope = explicit or "all"
+        lesson = strip_scope(lesson).strip()
+        if not lesson:
+            token = await resolve_token(installation_id)
+            await post_pr_comment(
+                token,
+                owner,
+                repo,
+                number,
+                "## if this ships\n\nTell me what to remember.",
+            )
+            return
+        install_token = await resolve_token(installation_id)
+        token = settings.github_token or install_token
+        if in_reply_to:
+            try:
+                parent = await get_review_comment(token, owner, repo, in_reply_to)
+                about = (parent.get("body") or about)[:500]
+            except Exception:
+                log.exception("could not load parent review comment %s", in_reply_to)
+        comment_id = await post_pr_comment(
+            install_token,
             owner,
             repo,
             number,
-            "## if this ships\n\nTell me what to remember.",
+            "## if this ships\n\nSaving this note.",
         )
-        return
-    install_token = await resolve_token(installation_id)
-    token = settings.github_token or install_token
-    if in_reply_to:
+        await _save_lesson(
+            installation_id,
+            owner,
+            repo,
+            number,
+            lesson,
+            scope,
+            about=about,
+            comment_id=comment_id,
+            announce_scope=explicit is not None,
+        )
+    except Exception as e:
+        log.exception("teach failed")
         try:
-            parent = await get_review_comment(token, owner, repo, in_reply_to)
-            about = (parent.get("body") or about)[:500]
+            token = await resolve_token(installation_id)
+            await post_pr_comment(token, owner, repo, number, fail_body("teach", e))
         except Exception:
-            log.exception("could not load parent review comment %s", in_reply_to)
-    comment_id = await post_pr_comment(
-        install_token,
-        owner,
-        repo,
-        number,
-        "## if this ships\n\nSaving this note.",
-    )
-    await _save_lesson(
-        installation_id,
-        owner,
-        repo,
-        number,
-        lesson,
-        scope,
-        about=about,
-        comment_id=comment_id,
-        announce_scope=explicit is not None,
-    )
+            log.exception("could not post teach failure")
+        raise
 
 
 async def finish_pending_teach(

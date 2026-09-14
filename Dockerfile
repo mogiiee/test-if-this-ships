@@ -12,8 +12,10 @@ ENV GIT_SHA=$GIT_SHA
 COPY pyproject.toml ./
 COPY groundskeeper ./groundskeeper
 COPY context ./context
+COPY scripts ./scripts
 
 RUN pip install --no-cache-dir -e .
+RUN python scripts/selfcheck.py
 
 EXPOSE 8787
 

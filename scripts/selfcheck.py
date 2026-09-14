@@ -264,6 +264,9 @@ this only
     )
     assert parsed is not None
     assert parsed["lesson"] == "no try/catch"
+    from scripts.stress import main as stress_main
+
+    stress_main()
     print("selfcheck ok")
 
 
