@@ -63,6 +63,13 @@ def main() -> None:
         "don't warn about sessions",
     )
     assert parse_mention("looks fine", "if-this-ships") == (None, "")
+    assert Settings().has_anthropic_wif() is False
+    wif = Settings(
+        anthropic_federation_rule_id="fdrl_x",
+        anthropic_organization_id="00000000-0000-0000-0000-000000000000",
+        anthropic_service_account_id="svac_x",
+    )
+    assert wif.has_anthropic_wif() is True
     from groundskeeper.commands import parse_scope, strip_scope
     from groundskeeper.learned import filter_learned, quoted_lesson
 

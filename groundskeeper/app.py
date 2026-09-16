@@ -53,6 +53,9 @@ async def health():
         "sha": (s.git_sha or "unknown")[:12],
         "githubApp": s.has_github_app(),
         "hasPat": bool(s.github_token),
+        "anthropic": (
+            "wif" if s.has_anthropic_wif() else ("key" if s.anthropic_api_key else "none")
+        ),
     }
 
 

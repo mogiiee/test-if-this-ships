@@ -41,9 +41,19 @@ def explain_fail(err: BaseException) -> str:
     status = _http_status(err)
 
     if "api key is invalid" in low or "anthropic api key" in low or "authentication_error" in low:
-        return "The model key is invalid. Update `ANTHROPIC_API_KEY` on the service."
-    if "an anthropic_api_key is required" in low or "anthropic_api_key is required" in low:
-        return "No model key is set. Set `ANTHROPIC_API_KEY` on the service."
+        return (
+            "Anthropic rejected the identity. Check the Console federation rule "
+            "(issuer, audience, role ARN) or `ANTHROPIC_API_KEY`."
+        )
+    if "need anthropic wif" in low or "an anthropic_api_key is required" in low or "anthropic_api_key is required" in low:
+        return (
+            "No Anthropic identity is set. Use AWS WIF "
+            "(`ANTHROPIC_FEDERATION_RULE_ID`) or `ANTHROPIC_API_KEY`."
+        )
+    if "outboundwebidentityfederationdisabled" in low or "outbound web identity federation" in low:
+        return "AWS outbound web identity federation is off in this account."
+    if "sts:getwebidentitytoken" in low or "getwebidentitytoken" in low:
+        return "The App Runner role cannot mint an STS identity token."
     if "resource not accessible by integration" in low:
         return (
             "The GitHub App cannot access that resource. "

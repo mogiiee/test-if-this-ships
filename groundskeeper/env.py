@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     learned_path: str = "learned.md"
     learned_ref: str = "main"
     git_sha: str = "unknown"
+    anthropic_federation_rule_id: str = ""
+    anthropic_organization_id: str = ""
+    anthropic_service_account_id: str = ""
+    anthropic_workspace_id: str = ""
+    aws_region: str = "us-east-1"
 
     def normalized_private_key(self) -> str:
         return self.github_app_private_key.replace("\\n", "\n")
@@ -30,6 +35,13 @@ class Settings(BaseSettings):
             self.github_app_id
             and self.github_app_private_key
             and self.github_webhook_secret
+        )
+
+    def has_anthropic_wif(self) -> bool:
+        return bool(
+            self.anthropic_federation_rule_id
+            and self.anthropic_organization_id
+            and self.anthropic_service_account_id
         )
 
 

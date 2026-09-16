@@ -424,9 +424,13 @@ def test_fail_models() -> None:
     cases: list[tuple[BaseException, str]] = [
         (
             RuntimeError("Anthropic API key is invalid. Update ANTHROPIC_API_KEY on the service."),
-            "The model key is invalid",
+            "Anthropic rejected the identity",
         ),
-        (RuntimeError("ANTHROPIC_API_KEY is required"), "No model key is set"),
+        (RuntimeError("ANTHROPIC_API_KEY is required"), "No Anthropic identity is set"),
+        (
+            RuntimeError("sts:GetWebIdentityToken failed: AccessDenied"),
+            "cannot mint an STS identity token",
+        ),
         (
             RuntimeError("GitHub 403 writing learned.md: Resource not accessible by integration"),
             "cannot access that resource",
@@ -555,10 +559,10 @@ async def test_pipeline_failure_models() -> None:
     e = await boom_kind(
         RuntimeError("Anthropic API key is invalid. Update ANTHROPIC_API_KEY on the service.")
     )
-    _assert_clean_fail(fail_body("review", e), "model key is invalid")
+    _assert_clean_fail(fail_body("review", e), "Anthropic rejected the identity")
 
     e = await boom_kind(RuntimeError("ANTHROPIC_API_KEY is required"))
-    _assert_clean_fail(fail_body("review", e), "No model key is set")
+    _assert_clean_fail(fail_body("review", e), "No Anthropic identity is set")
 
     def no_json(*, model, system, user, max_tokens=4096):
         if "TRIAGE only" in user:
@@ -646,7 +650,7 @@ async def test_review_pr_posts_clean_fail() -> None:
         else:
             raise AssertionError("review_pr should re-raise after posting")
     fail = posted[-1]
-    _assert_clean_fail(fail, "Review failed.", "model key is invalid")
+    _assert_clean_fail(fail, "Review failed.", "Anthropic rejected the identity")
     assert "`RuntimeError" not in fail
 
 
