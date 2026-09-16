@@ -70,8 +70,8 @@ def help_body(rules_url: str) -> str:
     return (
         "## if this ships\n\n"
         "QdRepo's reviewer for appointment-bridge PRs.\n\n"
-        "- `@if-this-ships review` — review this PR\n"
-        "- `@if-this-ships deep review` — flag every issue (no cap): security, selectors, core/node mismatch, unused code, what ships\n"
+        "- `@if-this-ships review` — review this PR (bridge rules, then whether it matches the linked issue / PR body)\n"
+        "- `@if-this-ships deep review` — flag every issue (no cap): security, selectors, core/node mismatch, unused code, what ships. Still two axes: Standards vs Spec.\n"
         "- `@if-this-ships teach …` — I'll remember it and use it on the next review\n"
         "- `@if-this-ships override` — you think I'm wrong; I'll approve anyway\n\n"
         f"Current rules: {rules_url}\n\n"

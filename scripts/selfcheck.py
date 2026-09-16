@@ -47,6 +47,22 @@ def main() -> None:
     assert "originalRequest" in grass
     assert "already-logged-in" in grass or "already logged in" in grass
     assert "if this ships" in grass.lower()
+    assert "Two axes" in grass
+    assert "skip Spec" in grass
+    assert "Do not flag what CI already catches" in grass
+    assert "Judgement smells" in grass
+    from groundskeeper.spec import format_spec_prompt, issue_numbers, pr_body_as_spec
+
+    assert issue_numbers("Fix logout", "Closes #9 and see #10", pr_number=11) == [9, 10]
+    assert issue_numbers("x", "see #11", pr_number=11) == []
+    assert issue_numbers(
+        "x", "https://github.com/a/b/issues/4", pr_number=1
+    ) == [4]
+    assert pr_body_as_spec("Closes #9") == ""
+    assert "settle after search" in pr_body_as_spec("settle after search")
+    assert "Issue #9" in format_spec_prompt(["Issue #9: logout\nreal UI"], "")
+    assert format_spec_prompt([], "") == ""
+    assert format_spec_prompt([], "Closes #9") == ""
 
     assert parse_mention("@if-this-ships review", "if-this-ships") == ("review", "")
     assert parse_mention("if-this-ships review", "if-this-ships") == ("review", "")
@@ -255,6 +271,35 @@ this only
     )
     assert "Approved" in low_md
     assert "low notes" in low_md
+    spec_f = Finding(
+        type="spec",
+        severity="high",
+        path="src/helpers/verificationHelper.ts",
+        line=10,
+        intent="verify exists",
+        if_ships="jobs take the wrong create/change path",
+        why="Issue #9 asked to set exists from the row; the diff never reads the table.",
+        fix_direction="Read the search row before returning exists.",
+        axis="spec",
+        spec_kind="missing",
+    )
+    mixed_md = format_review_markdown(
+        PipelineOut(
+            triage=TriageResult(files_changed=1, reason="tiny"),
+            review=ReviewResult(
+                summary="Verify helper misses the ticket.",
+                change_class="flow_change",
+                clean=False,
+                findings=[high, spec_f],
+            ),
+            core_version="v1.0.59",
+            models={"triage": "haiku", "review": "haiku"},
+            review_tier="triage",
+        )
+    )
+    assert mixed_md.index("### Spec") < mixed_md.index("### Standards")
+    assert "asked, missing" in mixed_md
+    assert "no try/catch in helpers" in mixed_md
     help_md = help_body("https://github.com/QdRepo/if-this-ships-notes/blob/main/learned.md")
     assert "@if-this-ships teach" in help_md
     assert "@if-this-ships override" in help_md

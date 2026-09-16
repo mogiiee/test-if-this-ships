@@ -12,6 +12,7 @@ from groundskeeper.core_fetch import (
 from groundskeeper.env import get_settings
 from groundskeeper.github_client import learned_access_token
 from groundskeeper.learned import load_learned
+from groundskeeper.spec import load_spec_text
 from groundskeeper.types import Finding, PipelineOut, PrBundle, ReviewResult, TriageResult
 
 SEVERITY_RANK = {"blocker": 0, "high": 1, "medium": 2, "low": 3}
@@ -39,9 +40,24 @@ def review_event(review: ReviewResult) -> str:
     return "APPROVE"
 
 
+def finding_axis(f: Finding) -> str:
+    if f.axis == "spec" or f.type == "spec" or f.spec_kind:
+        return "spec"
+    return "standards"
+
+
+_SPEC_KIND_TITLE = {
+    "missing": "asked, missing",
+    "creep": "not asked",
+    "wrong": "asked, wrong",
+}
+
+
 def format_finding_line(f: Finding) -> str:
     loc = f"`{f.path}:{f.line}`" if f.path and f.line else (f"`{f.path}`" if f.path else "")
-    title = f"{f.always_flag or f.type}"
+    title = f.always_flag or (
+        _SPEC_KIND_TITLE.get(f.spec_kind or "", "") if finding_axis(f) == "spec" else ""
+    ) or f.type
     where = f" in {loc}" if loc else ""
     bits = [f"**{title}**{where}", f.why]
     if f.fix_direction:
@@ -94,8 +110,10 @@ async def run_review_pipeline(
     github_token: str, pr: PrBundle, *, deep: bool = False
 ) -> PipelineOut:
     settings = get_settings()
-    grass = load_grass_context(
-        skip={"how-we-review.md"} if deep else None
+    grass = load_grass_context()
+    spec_text = await load_spec_text(github_token, pr)
+    spec_block = spec_text or (
+        "(none — skip the Spec axis. Do not invent requirements.)"
     )
     learned = await load_learned(
         await learned_access_token(github_token), pr.owner, pr.repo
@@ -183,7 +201,7 @@ Rules for your flags:
   "clean": boolean,
   "findings": [
     {
-      "type": "blatant"|"flow_impact"|"hyperbrowser_risk"|"contract"|"security"|"info",
+      "type": "blatant"|"flow_impact"|"hyperbrowser_risk"|"contract"|"security"|"info"|"spec",
       "severity": "blocker"|"high"|"medium"|"low",
       "path": string optional,
       "line": number optional,
@@ -193,7 +211,9 @@ Rules for your flags:
       "why": string,
       "fix_direction": string,
       "suggestion": string optional,
-      "always_flag": string optional
+      "always_flag": string optional,
+      "axis": "standards"|"spec",
+      "spec_kind": "missing"|"creep"|"wrong" optional
     }
   ]
 }"""
@@ -220,6 +240,9 @@ Hyperbrowser is a brand-new isolated browser every job. Do not warn about leftov
 ## Core at {core_version or "unknown"}
 {core_prompt}
 
+## Spec source
+{spec_block}
+
 ## PR
 {pr.owner}/{pr.repo}#{pr.number}
 Title: {pr.title}
@@ -236,7 +259,9 @@ Review tier: {review_tier}
 - Return JSON only matching:
 {schema}
 - Report every distinct issue. No cap. Worst first. Nits stay in the list as low.
-- Do not omit selector / Date / nth(0) / lockfile-pin issues because a bigger bug exists.
+- Set axis on every finding. Spec findings use type "spec" and spec_kind missing|creep|wrong, and quote the spec line in why. If the spec source is none, emit zero spec findings.
+- Repo rules beat judgement smells. Do not flag what CI (types, lint, format, lockfile) would catch. Judgement smells are low only.
+- Do not omit selector / Date / nth(0) / lockfile-pin issues because a bigger bug exists. Lockfile-pin vs package.json is not CI-only; still flag it.
 - Taught notes win.
 - summary: one Slack sentence of what this PR actually does.
 - why / if_ships / fix_direction: one sentence each.
@@ -261,6 +286,9 @@ Hyperbrowser is a brand-new isolated browser every job. Never warn about leftove
 ## Core at {core_version or "unknown"}
 {core_prompt}
 
+## Spec source
+{spec_block}
+
 ## PR
 {pr.owner}/{pr.repo}#{pr.number}
 Title: {pr.title}
@@ -277,14 +305,16 @@ Review tier: {review_tier}
 - Return JSON only matching:
 {schema}
 - Prefer clean=true and findings=[]. That is the correct answer for a reasonable helper PR.
+- Set axis on every finding. Spec findings use type "spec" and spec_kind missing|creep|wrong, and quote the spec line in why. If the spec source is none, emit zero spec findings.
+- Repo rules beat judgement smells. Do not flag what CI (types, lint, format, lockfile) would catch. Judgement smells are low only, and drop them first if you hit the cap.
 - Taught notes win. If the team said a GitHub token in package.json / package-lock.json is fine on these private repos, do not flag it. Same for any other taught exception.
 - Do not stretch always-flag-these. No try/catch in the diff → do not mention try/catch. Same for every other item.
 - Do not flag incomplete wiring, portal copy guesses, missing REQ_OPT_NOT_FOUND, networkidle, AuditError for missing fields, or "bridge only has logout".
 - summary: one Slack sentence.
 - why / if_ships / fix_direction: one sentence each. No paragraphs.
-- At most 3 findings. Drop the rest.
+- At most 3 findings. Spec + always-flag first. Drop the rest.
 - suggestion only for a tiny patch.
-- Worst first: blocker, high, medium, low."""
+- Worst first inside each axis: blocker, high, medium, low."""
         system = "if this ships: sparse. Approve when nothing is blatantly broken. JSON only. Two sentences max per finding. Do not invent work."
         max_tokens = 4096
 
@@ -336,14 +366,19 @@ def format_review_markdown(out: PipelineOut) -> str:
     elif review_event(review) == "APPROVE":
         lines += ["", "Approved. None of this blocks merge."]
 
-    current = None
-    for f in sort_findings(review.findings):
-        heading = SEVERITY_HEADING.get(f.severity, f.severity)
-        if heading != current:
-            current = heading
-            lines += ["", f"### {heading}", ""]
-        lines.append(format_finding_line(f))
-        if f.suggestion:
-            lines += ["", "```suggestion", f.suggestion, "```"]
-        lines.append("")
+    for axis, heading in (("spec", "Spec"), ("standards", "Standards")):
+        group = [f for f in review.findings if finding_axis(f) == axis]
+        if not group:
+            continue
+        lines += ["", f"### {heading}", ""]
+        current = None
+        for f in sort_findings(group):
+            sev = SEVERITY_HEADING.get(f.severity, f.severity)
+            if sev != current:
+                current = sev
+                lines += [f"**{sev}**", ""]
+            lines.append(format_finding_line(f))
+            if f.suggestion:
+                lines += ["", "```suggestion", f.suggestion, "```"]
+            lines.append("")
     return "\n".join(lines).rstrip() + "\n"

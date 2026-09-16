@@ -480,7 +480,7 @@ def test_fail_models() -> None:
     _assert_clean_fail(fail_body("review", http_err), "could not find")
 
 
-async def _pipeline_with(complete, *, deep=False, bundle=None, learned=""):
+async def _pipeline_with(complete, *, deep=False, bundle=None, learned="", spec=""):
     bundle = bundle or pr_bundle()
 
     async def no_core(*a, **k):
@@ -489,10 +489,14 @@ async def _pipeline_with(complete, *, deep=False, bundle=None, learned=""):
     async def notes(*a, **k):
         return learned
 
+    async def spec_text(*a, **k):
+        return spec
+
     with (
         patch("groundskeeper.pipeline.complete_json", complete),
         patch("groundskeeper.pipeline.fetch_core_snapshot", no_core),
         patch("groundskeeper.pipeline.load_learned", notes),
+        patch("groundskeeper.pipeline.load_spec_text", spec_text),
         patch("groundskeeper.pipeline.learned_access_token", AsyncMock(return_value="t")),
         patch("groundskeeper.pipeline.get_settings", return_value=fake_settings()),
     ):
@@ -529,20 +533,31 @@ async def test_pipeline_versions_in_prompt() -> None:
 
 async def test_pipeline_taught_notes_and_deep() -> None:
     complete = _json_complete()
-    await _pipeline_with(complete, learned="## note\nGH token in lockfile is fine\n")
+    await _pipeline_with(
+        complete,
+        learned="## note\nGH token in lockfile is fine\n",
+        spec="Issue #9: real UI logout\nLogout must click Sign out.",
+    )
     user = complete.calls[-1]["user"]
     assert "TAUGHT NOTES" in user
     assert "GH token in lockfile is fine" in user
     assert "how-we-review.md" in user
+    assert "Issue #9: real UI logout" in user
+    assert "skip the Spec axis" not in user
+
+    empty_spec = _json_complete()
+    await _pipeline_with(empty_spec, spec="")
+    assert "skip the Spec axis" in empty_spec.calls[-1]["user"]
 
     deep = _json_complete()
     out = await _pipeline_with(deep, deep=True)
     assert out.review_tier == "deep"
     assert out.models["triage"] == "skipped"
     assert len(deep.calls) == 1
-    assert "how-we-review.md" not in deep.calls[0]["user"]
+    assert "how-we-review.md" in deep.calls[0]["user"]
     assert "DEEP review" in deep.calls[0]["user"]
     assert "No finding cap" in deep.calls[0]["user"] or "no cap" in deep.calls[0]["user"].lower()
+    assert "Spec source" in deep.calls[0]["user"]
 
 
 async def test_pipeline_failure_models() -> None:
