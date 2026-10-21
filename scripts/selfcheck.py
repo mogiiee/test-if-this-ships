@@ -44,6 +44,7 @@ def main() -> None:
     assert "always-flag-these.md" in deep_grass
     assert "coding-rules.md" in grass
     assert "try/catch" in grass
+    assert "this.step" in grass
     assert "originalRequest" in grass
     assert "already-logged-in" in grass or "already logged in" in grass
     assert "if this ships" in grass.lower()

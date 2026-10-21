@@ -20,7 +20,7 @@
   - a wrapper that only forwards to core
   - an abstraction / hook the spec did not ask for
 - **Silence is the default** on `@if-this-ships review`. Clean or merely incomplete work → `clean=true`, zero findings, one-line summary, approve. Deep review reports every real issue and has **no finding cap**. Deep still skips invented specs, CI-only nits, and leftover-login session warnings.
-- Do not stretch always-flag-these.md. Flag only when the **diff literally does that thing** (try/catch is in the file, `originalRequest` is read, logout is a TODO/no-op, `throw new Error`, REQUESTED with no UI read).
+- Do not stretch always-flag-these.md. Flag only when the **diff literally does that thing** (try/catch is in the file, `originalRequest` is read, logout is a TODO/no-op, `throw new Error`, REQUESTED with no UI read, or a UI stage in the diff is not inside its own `this.step()`).
 - Do **not** flag: helpers without the rest of the bridge wired; status strings / portal copy; missing REQ_OPT_NOT_FOUND unless they used the wrong field name; `networkidle` after a settle; AuditError for a missing payload field; `rescheduleAllowed` when `exists` is false; type-coercion nits; “use successResponse” when they already return a status after reading the UI.
 - Incomplete PRs are fine. Do not demand files that are not in the diff.
 - Flow names go in the summary only. Do not add a finding just to say a flow changed.

@@ -71,6 +71,10 @@ def explain_fail(err: BaseException) -> str:
             "The bot has no GitHub credentials. "
             "Set the GitHub App or `GITHUB_TOKEN` on the service."
         )
+    if "unterminated string" in low or "model json was cut off" in low:
+        return "The model response was cut off mid-JSON. Retry the review."
+    if "invalid \\escape" in low or "jsondecodeerror" in low:
+        return "The model returned JSON that could not be parsed. Retry the review."
     if "no json object" in low:
         return "The model returned text that was not JSON. Retry the review."
     if "validation error" in low:

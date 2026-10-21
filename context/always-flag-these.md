@@ -17,3 +17,4 @@ If the PR **literally introduces** one of these, post a finding. Do not stretch 
 13. **OTP/2FA without auth lock**.
 14. **Self-check / assert demos left in production helpers**.
 15. **Rebuilding core-owned pieces** (SQS handler, browser launch) instead of using `appt-bridge-core`.
+16. **UI stage not in `this.step()`** — every UI stage in a helper (open, fill, read, search slots, go back, select, submit) must be its own `this.step(label, fn)` from `BaseAppointmentHelper` (`step` in `appt-bridge-core`). One wrap around `process()` is not enough. Do not nest `step()`. Payload `AuditError` stays outside `step` so the type stays `payloadIssue`; inside `step` a throw becomes `uiIssues`. Flag this when the diff adds or changes a UI stage that is not wrapped. Do not demand `step()` on a diff with no UI.

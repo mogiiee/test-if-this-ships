@@ -445,6 +445,15 @@ def test_fail_models() -> None:
             "no GitHub credentials",
         ),
         (ValueError("No JSON object in model response"), "was not JSON"),
+        (ValueError("model JSON was cut off"), "cut off mid-JSON"),
+        (
+            json.JSONDecodeError("Unterminated string starting at", '{"why": "see }', 8),
+            "cut off mid-JSON",
+        ),
+        (
+            json.JSONDecodeError("Invalid \\escape", '{"why": "\\s"}', 8),
+            "could not be parsed",
+        ),
         (
             RuntimeError("1 validation error for ReviewResult\nsummary\n  Field required"),
             "did not match the schema",
@@ -600,6 +609,189 @@ async def test_pipeline_failure_models() -> None:
         raise AssertionError("expected schema failure")
     except Exception as err:
         _assert_clean_fail(fail_body("review", err), "did not match the schema")
+
+
+def _finding(**extra) -> dict:
+    data = {
+        "type": "blatant",
+        "severity": "high",
+        "intent": "logout",
+        "if_ships": "jobs hang",
+        "why": "selector } misses Sign out",
+        "fix_direction": "click the real control",
+    }
+    data.update(extra)
+    return data
+
+
+def _cut_after_findings(findings: list[dict], tail: str) -> str:
+    """Pretty JSON with the root left open and `tail` appended mid-string."""
+    body = json.dumps(
+        {
+            "summary": "Logout click is wrong.",
+            "change_class": "bugfix",
+            "flows_touched": ["logout"],
+            "clean": False,
+            "findings": findings,
+        },
+        indent=2,
+    )
+    trimmed = body.rstrip()
+    assert trimmed.endswith("}")
+    trimmed = trimmed[:-1].rstrip()
+    assert trimmed.endswith("]")
+    trimmed = trimmed[:-1].rstrip().rstrip(",")
+    return trimmed + tail
+
+
+def test_truncated_json_keeps_finished_findings() -> None:
+    from groundskeeper.claude import extract_json
+
+    kept = _finding()
+    # The open string contains `}`, which is what json.loads used to die on:
+    # Unterminated string starting at the cut value.
+    truncated = _cut_after_findings([kept], ',\n    {\n      "why": "see } this never ends')
+    raw = truncated[truncated.find("{") :]
+    end = raw.rfind("}")
+    try:
+        json.loads(raw[: end + 1])
+        raise AssertionError("slice through the last } should be unterminated")
+    except json.JSONDecodeError as err:
+        assert "Unterminated string" in err.msg
+
+    data = extract_json(truncated)
+    assert data["summary"] == "Logout click is wrong."
+    assert data["clean"] is False
+    assert data["findings"] == [kept]
+    assert extract_json('{"why": "use } carefully", "ok": true}')["ok"] is True
+
+
+def test_invalid_escape_is_repaired() -> None:
+    from groundskeeper.claude import extract_json
+
+    # Model wrote a regex / path with a single backslash. json.loads calls that
+    # "Invalid \escape" and used to fail the whole review.
+    bad = '{"why": "selector \\s and \\. misses Sign out", "path": "C:\\Users\\x", "ok": true}'
+    try:
+        json.loads(bad)
+        raise AssertionError("fixture should be illegal JSON")
+    except json.JSONDecodeError as err:
+        assert "Invalid \\escape" in err.msg
+    data = extract_json(bad)
+    assert data["why"] == "selector \\s and \\. misses Sign out"
+    assert data["path"] == "C:\\Users\\x"
+    assert data["ok"] is True
+    # Legal escapes stay legal.
+    assert extract_json('{"why": "line\\nbreak", "u": "\\u0041"}') == {
+        "why": "line\nbreak",
+        "u": "A",
+    }
+
+
+def test_complete_json_retries_unusable() -> None:
+    from groundskeeper.claude import complete_json
+
+    class _Block:
+        def __init__(self, text: str):
+            self.type = "text"
+            self.text = text
+
+    class _Msg:
+        def __init__(self, text: str, stop: str = "end_turn"):
+            self.content = [_Block(text)]
+            self.stop_reason = stop
+
+    class _Messages:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return _Msg("{", stop="max_tokens")
+            return _Msg('{"ok": true}')
+
+    messages = _Messages()
+
+    class _Client:
+        def __init__(self):
+            self.messages = messages
+
+    with patch("groundskeeper.claude.anthropic_client", return_value=_Client()):
+        text, model = complete_json(model="m", system="s", user="u", max_tokens=32)
+    assert model == "m"
+    assert text == '{"ok": true}'
+    assert len(messages.calls) == 2
+    assert "cut off" in messages.calls[1]["messages"][0]["content"]
+
+    salvageable = _cut_after_findings(
+        [_finding()],
+        ',\n    {\n      "why": "see } this never ends',
+    )
+    messages.calls.clear()
+
+    class _Once:
+        def __init__(self):
+            self.messages = messages
+
+    def create_once(**kwargs):
+        messages.calls.append(kwargs)
+        return _Msg(salvageable, stop="max_tokens")
+
+    messages.create = create_once  # type: ignore[method-assign]
+    with patch("groundskeeper.claude.anthropic_client", return_value=_Once()):
+        text, _model = complete_json(model="m", system="s", user="u", max_tokens=32)
+    assert text == salvageable
+    assert len(messages.calls) == 1
+
+
+async def test_pipeline_salvages_truncated_review() -> None:
+    kept = _finding()
+    truncated = _cut_after_findings(
+        [kept],
+        ',\n    {\n      "why": "see } this never ends',
+    )
+
+    def complete(*, model, system, user, max_tokens=4096):
+        complete.calls.append(user)  # type: ignore[attr-defined]
+        if "TRIAGE only" in user:
+            return json.dumps(TRIAGE_OK), model
+        return truncated, model
+
+    complete.calls = []  # type: ignore[attr-defined]
+    out = await _pipeline_with(complete)
+    assert len(complete.calls) == 2  # triage + one review, no compact retry
+    assert out.review.summary == "Logout click is wrong."
+    assert len(out.review.findings) == 1
+    assert out.review.findings[0].why == "selector } misses Sign out"
+
+
+async def test_pipeline_retries_when_only_finding_was_cut() -> None:
+    truncated = _cut_after_findings(
+        [],
+        '{\n      "why": "see } the only finding never ends',
+    )
+    recovered = {
+        "summary": "Logout click is wrong.",
+        "change_class": "bugfix",
+        "flows_touched": ["logout"],
+        "clean": False,
+        "findings": [_finding()],
+    }
+
+    def complete(*, model, system, user, max_tokens=4096):
+        complete.calls.append(user)  # type: ignore[attr-defined]
+        if "TRIAGE only" in user:
+            return json.dumps(TRIAGE_OK), model
+        if "cut off" in user:
+            return json.dumps(recovered), model
+        return truncated, model
+
+    complete.calls = []  # type: ignore[attr-defined]
+    out = await _pipeline_with(complete)
+    assert len(complete.calls) == 3
+    assert len(out.review.findings) == 1
+    assert out.review.findings[0].fix_direction == "click the real control"
 
 
 async def test_submit_review_retries_without_inline_on_422() -> None:
@@ -963,6 +1155,11 @@ def main() -> None:
     acheck("pipeline versions in prompt", test_pipeline_versions_in_prompt)
     acheck("pipeline taught notes and deep", test_pipeline_taught_notes_and_deep)
     acheck("pipeline failure models", test_pipeline_failure_models)
+    check("truncated json", test_truncated_json_keeps_finished_findings)
+    check("invalid escape", test_invalid_escape_is_repaired)
+    check("complete_json retries unusable", test_complete_json_retries_unusable)
+    acheck("pipeline salvages truncated review", test_pipeline_salvages_truncated_review)
+    acheck("pipeline retries cut finding", test_pipeline_retries_when_only_finding_was_cut)
     acheck("github 422 retry", test_submit_review_retries_without_inline_on_422)
     acheck("github hard fail is clean", test_submit_review_hard_fail_is_clean)
     acheck("review_pr posts clean fail", test_review_pr_posts_clean_fail)

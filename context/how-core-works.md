@@ -26,3 +26,7 @@ Wrong `exists`, `isRequestChanged`, or `rescheduleAllowed` changes which process
 Prod = Hyperbrowser. Every job gets a **new isolated browser**. There is never an already-logged-in session from a previous run. When auth is required, `login` always runs. Do not review as if the portal might still be signed in.
 
 `close()` must stop that Hyperbrowser session. Logout is still real UI sign-out (site session / seat), then close.
+
+## `step()`
+
+Core exports `step`. Helpers call `this.step(label, fn)` once per UI stage. On throw it screenshots and rethrows `AuditError` type `uiIssues`. Do not wrap a whole `process()` in one call, and do not nest calls.

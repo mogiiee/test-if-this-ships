@@ -1,8 +1,10 @@
+import logging
 import re
 
 import httpx
+from pydantic import ValidationError
 
-from groundskeeper.claude import complete_json, extract_json
+from groundskeeper.claude import COMPACT_JSON_RETRY, complete_json, extract_json
 from groundskeeper.context_load import load_grass_context
 from groundskeeper.core_fetch import (
     fetch_core_snapshot,
@@ -14,6 +16,8 @@ from groundskeeper.github_client import learned_access_token
 from groundskeeper.learned import load_learned
 from groundskeeper.spec import load_spec_text
 from groundskeeper.types import Finding, PipelineOut, PrBundle, ReviewResult, TriageResult
+
+log = logging.getLogger("if-this-ships")
 
 SEVERITY_RANK = {"blocker": 0, "high": 1, "medium": 2, "low": 3}
 SEVERITY_HEADING = {
@@ -324,7 +328,20 @@ Review tier: {review_tier}
         user=review_user,
         max_tokens=max_tokens,
     )
-    review = ReviewResult.model_validate(extract_json(review_text))
+    try:
+        review = ReviewResult.model_validate(extract_json(review_text))
+    except (ValidationError, ValueError):
+        review = None
+    # clean=false with nothing left means the only finding was the cut-off string.
+    if review is None or (not review.clean and not review.findings):
+        log.warning("review JSON was cut off; retrying compact")
+        review_text, review_model_used = complete_json(
+            model=review_model,
+            system=system,
+            user=review_user + COMPACT_JSON_RETRY,
+            max_tokens=max_tokens,
+        )
+        review = ReviewResult.model_validate(extract_json(review_text))
     if deep:
         if review.findings:
             review.clean = False
